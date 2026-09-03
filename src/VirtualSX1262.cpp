@@ -75,18 +75,6 @@ void VirtualSX1262::tick(uint64_t nowMs) {
     spuriousRaises_++;
     nextSpuriousMs_ = nowMs_ + stuckIrqMs_;
   }
-  // A frame the engine handed over while the chip was not listening used to sit
-  // in the inbox until the chip returned to receive, however long that took - so
-  // a packet could arrive seconds after the air that carried it went quiet. The
-  // engine has already ruled on half duplex before it delivers anything (it
-  // withholds what a node transmitted over), so this is the chip's own
-  // deafness, and it needs a bound rather than an open queue.
-  //
-  // The bound is a short grace rather than an immediate drop on purpose. The
-  // driver's own re-arm is standby -> configure -> SetRx, so mode_ is briefly 0
-  // in the middle of a perfectly healthy receiver, and a frame landing in that
-  // gap is receivable. Beyond the grace it is not: nothing that arrives that
-  // late was carried by the signal that has already ended.
   settleInbox();
 
   // Preamble and header detection, in receive mode only. A node cannot hear
@@ -129,7 +117,7 @@ void VirtualSX1262::setChannelBusy(bool busy) {
     preambleRaised_ = false;
     headerRaised_ = false;
     if (stuckIrqMs_ == 0) {
-      irq_ &= (uint16_t)~(kIrqPreambleDetected | kIrqHeaderValid | kIrqSyncWordValid);
+      irq_ &= (uint16_t) ~(kIrqPreambleDetected | kIrqHeaderValid | kIrqSyncWordValid);
     }
   }
   channelBusy_ = busy;
@@ -163,6 +151,17 @@ uint64_t VirtualSX1262::inboxGraceMs() const {
 // Whether the frame at the front of the inbox goes to the firmware or goes in
 // the bin. Both of its callers ask the same question, so it is asked once here:
 // tick(), as the clock moves, and startRx(), as the firmware arms the receiver.
+//
+// A frame the engine handed over while the chip was not listening used to sit in
+// the inbox until the chip returned to receive, however long that took, so a
+// packet could arrive seconds after the air that carried it went quiet. The
+// engine has already ruled on half duplex before it delivers anything - it
+// withholds what a node transmitted over - so this is the chip's own deafness,
+// and it needs a bound rather than an open queue.
+//
+// The bound is a grace rather than an immediate drop on purpose: a driver's
+// re-arm is standby, configure, SetRx, so mode_ is briefly 0 in the middle of a
+// perfectly healthy receiver, and a frame landing in that gap is receivable.
 //
 // Only the deaf case has a deadline. Once the chip is listening the frame is
 // handed over however long it waited, because the wait was the chip's own

@@ -23,8 +23,20 @@ Enforced in CI, not by review:
 ```bash
 STRICT=1 ./build.sh        # warnings are errors, and the C header builds as C
 ./build.sh sanitize        # AddressSanitizer and UBSan, clean
-clang-format --dry-run --Werror include/*.h src/* test/*
+clang-format --dry-run --Werror include/*.h src/*.h src/*.cpp test/*
 ```
+
+**Use the clang-format CI pins**, which is the version in `CLANG_FORMAT_VERSION`
+at the top of `.github/workflows/ci.yml`:
+
+```bash
+pip install "clang-format==18.1.8"    # or whatever that variable now says
+```
+
+clang-format's output changes between releases, so a distribution's own copy
+will disagree with CI about lines neither of them is wrong about, and the
+formatting job becomes a coin toss. The pip wheel is the one way to install an
+exact version on Linux, macOS and Windows alike.
 
 `./build.sh pedantic` adds `-Wconversion`, `-Wsign-conversion` and
 `-Wold-style-cast`. It is **expected to fail** (31 findings at the time of

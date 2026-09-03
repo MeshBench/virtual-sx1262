@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CLANG_FORMAT_VERSION: 18.1.8
+
 jobs:
   # The matrix is the point: four hosts link this, on three operating systems,
   # with whichever compiler that platform ships. A model that only builds under
@@ -71,6 +74,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Pinned, because clang-format's output changes between releases and an
+      # unpinned one turns a formatting job into a coin toss: this repository's
+      # first version disagreed with a maintainer's local 22 about a line that
+      # neither of them was wrong about. The pip wheel is the one way to install
+      # an exact version on Linux, macOS and Windows alike, so a contributor can
+      # run the same binary CI does.
+      - name: install the pinned formatter
+        run: pip install "clang-format==${{ env.CLANG_FORMAT_VERSION }}"
       - name: formatting is not a review comment
         run: |
           clang-format --version
