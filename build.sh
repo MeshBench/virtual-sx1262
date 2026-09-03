@@ -60,19 +60,28 @@ build_shared() {
   echo "built $OUT/libvirtualsx1262.$SHARED_EXT"
 }
 
+# One binary per subject rather than one big one, because the house limit on
+# file length applies to tests too and a single file had already outgrown it.
+# They share test/harness.h and nothing else, so each counts its own failures.
+TESTS="test_reception test_interrupts test_spi"
+
 build_tests() {
-  $CXX $CXXFLAGS $SRC test/test_model.cpp -o "$OUT/test_model"
+  for t in $TESTS; do
+    $CXX $CXXFLAGS -Itest $SRC "test/$t.cpp" -o "$OUT/$t"
+  done
   # Compiled by the C compiler against the static library, which is the whole
   # point: a header that only works in C++ fails QEMU and Renode, not this.
   build_static >/dev/null
   # -lm and -lstdc++ by hand: the C driver links neither implicitly, and the
   # model uses fmax while the ABI is C++ underneath.
   $CC $CFLAGS_C test/test_c_abi.c "$OUT/libvirtualsx1262.a" -lstdc++ -lm -o "$OUT/test_c_abi"
-  echo "built $OUT/test_model $OUT/test_c_abi"
+  echo "built $TESTS and test_c_abi in $OUT"
 }
 
 run_tests() {
-  "$OUT/test_model"
+  for t in $TESTS; do
+    "$OUT/$t"
+  done
   "$OUT/test_c_abi"
 }
 
@@ -85,16 +94,20 @@ case "${1:-all}" in
   test)   build_tests; run_tests ;;
   pedantic)
     # Expected to fail today. It exists to measure the audit, not to gate it.
-    $CXX $CXXFLAGS $PEDANTIC_WARN -fsyntax-only $SRC test/test_model.cpp
+    $CXX $CXXFLAGS -Itest $PEDANTIC_WARN -fsyntax-only $SRC test/*.cpp
     ;;
   sanitize)
     SAN="-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1"
-    $CXX $CXXFLAGS $SAN $SRC test/test_model.cpp -o "$OUT/test_model_san"
+    for t in $TESTS; do
+      $CXX $CXXFLAGS -Itest $SAN $SRC "test/$t.cpp" -o "$OUT/${t}_san"
+    done
     # The C test gets the same treatment. Its own stack overflow is what proved
     # this needed to cover both binaries rather than just the C++ one.
     $CC $CFLAGS_C $SAN -Iinclude test/test_c_abi.c $SRC -lstdc++ -lm -o "$OUT/test_c_abi_san" 2>/dev/null \
       || $CXX $CXXFLAGS $SAN -x c++ test/test_c_abi.c $SRC -o "$OUT/test_c_abi_san"
-    ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/test_model_san"
+    for t in $TESTS; do
+      ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/${t}_san"
+    done
     ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/test_c_abi_san"
     ;;
   all)    build_static; build_shared; build_tests; run_tests ;;
