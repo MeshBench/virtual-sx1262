@@ -139,6 +139,17 @@ any of these.
   Bounded by a short grace, because a real driver's re-arm is standby, configure,
   `SetRx`, and a frame landing in that gap is genuinely receivable. Beyond it,
   nothing that arrives that late was carried by a signal that has already ended.
+- **There are two ways into the command decoder and they must agree.** A host
+  with the command in a buffer calls `vsx_spi_transaction`; an emulator has no
+  buffer, because its SPI controller clocks one byte and wants the answering
+  byte back before it clocks the next, so QEMU and Renode drive
+  `vsx_spi_begin` / `vsx_spi_byte` / `vsx_spi_end`. Both run the same decoder,
+  and `test_c_abi.c` holds them to identical replies for every command that
+  answers with data. If they ever drift, an emulated node is a different radio
+  from a native one and every comparison between them measures our code rather
+  than MeshCore's. The byte path already found one of these: `GetRssiInst` was
+  missing from `returnsData`, so it answered zero clocked and correctly
+  buffered, and every emulated board took its entropy from a constant.
 - **Airtime is Semtech's formula, not an approximation.** MeshCore's CSMA is
   built on the figure the firmware itself computes. A second formula here that
   is nearly right desynchronises the two silently.

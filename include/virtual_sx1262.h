@@ -10,10 +10,15 @@
  *
  * Two deliberate shapes, both learned from the socket this replaces:
  *
- *   Transactions, not bytes. vsx_spi_transaction takes a whole chip-select
- *   framed exchange. A call per byte across a managed-code boundary costs more
- *   than the socket it was meant to remove, and the chip has to know where one
- *   command ends anyway - there is no length in the wire protocol.
+ *   SPI both ways round, because the hosts are not alike. vsx_spi_transaction
+ *   takes a whole chip-select framed exchange, which is what a host with the
+ *   command already in a buffer has. An emulator does not: its SPI controller
+ *   clocks one byte and wants the answering byte back before it clocks the
+ *   next, so QEMU and Renode drive vsx_spi_begin / vsx_spi_byte / vsx_spi_end
+ *   instead. The model runs the same command either way and the two are held to
+ *   identical answers by a test, because an emulated node and a native one
+ *   being different radios would make every comparison between them a
+ *   comparison of our own code.
  *
  *   The chip raises DIO1; nobody asks it. The socket was request-response, so
  *   the model had no way to call back and its hosts polled the line on a timer
@@ -52,6 +57,21 @@ void vsx_set_dio1_callback(vsx_chip* chip, vsx_dio1_fn fn, void* user);
 /* One chip-select framed SPI exchange. `out` is MOSI, `in` receives MISO, both
  * `len` bytes. `in` may be NULL for a command whose reply is not wanted. */
 void vsx_spi_transaction(vsx_chip* chip, const uint8_t* out, uint8_t* in, size_t len);
+
+/* The same exchange a byte at a time, for a host whose SPI controller has no
+ * buffer to hand: chip select down, one call per clocked byte with the answering
+ * byte returned there and then, chip select up.
+ *
+ * The framing is not decoration. There is no length anywhere in an SX1262
+ * command, so the rising edge of chip select is the only thing that says a
+ * command is complete and may take effect. A host that clocks bytes and never
+ * releases has issued nothing.
+ *
+ * A byte clocked without a begin starts a transaction, because that is what the
+ * silicon does with a chip select somebody else drove low. */
+void vsx_spi_begin(vsx_chip* chip);
+uint8_t vsx_spi_byte(vsx_chip* chip, uint8_t out);
+void vsx_spi_end(vsx_chip* chip);
 
 /* BUSY, which RadioLib spins on. */
 int vsx_busy(const vsx_chip* chip);

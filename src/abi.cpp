@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 2
+#define VSX_ABI_MINOR 3
 
 struct vsx_chip {
   VirtualSX1262 chip;
@@ -82,6 +82,32 @@ void vsx_spi_transaction(vsx_chip* chip, const uint8_t* out, uint8_t* in, size_t
     }
   }
   chip->chip.spiTransfer(out, len, dst);
+  settle_dio1(chip);
+}
+
+void vsx_spi_begin(vsx_chip* chip) {
+  if (chip) {
+    chip->chip.beginTransaction();
+  }
+}
+
+uint8_t vsx_spi_byte(vsx_chip* chip, uint8_t out) {
+  if (!chip) {
+    return 0;
+  }
+  const uint8_t in = chip->chip.transferByte(out);
+  /* Settled here as well as at the release, because a command that returns data
+   * is run as its bytes arrive rather than at the end, and GetIrqStatus is read
+   * inside the same transaction that RadioLib then acts on. */
+  settle_dio1(chip);
+  return in;
+}
+
+void vsx_spi_end(vsx_chip* chip) {
+  if (!chip) {
+    return;
+  }
+  chip->chip.endTransaction();
   settle_dio1(chip);
 }
 

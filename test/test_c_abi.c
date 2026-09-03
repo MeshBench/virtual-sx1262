@@ -31,6 +31,86 @@ static void on_dio1(void* user, int asserted) {
   ++*(int*)user;
 }
 
+/* An emulator has no buffer to hand the chip: its SPI controller clocks one
+ * byte and wants the answering byte back before it clocks the next. That is a
+ * second way into the same command decoder, and the two must not drift - an
+ * emulated node and a native one being different radios is what this whole
+ * arrangement exists to avoid, and it would show up as a board that configures
+ * its radio and then behaves slightly differently for reasons nobody can see.
+ *
+ * Driven from C rather than from test_model.cpp because this is the path QEMU
+ * and Renode take, and they take it through this header.
+ */
+static void byte_path_matches_buffer_path(void) {
+  /* Commands that answer with data, which is where the two paths could differ:
+   * a write is only run at the release and has nothing to say meanwhile.
+   * GetRssiInst is here deliberately - it reads the receiver's noise, which is
+   * drawn once per transaction, so it also proves the two paths draw alike. */
+  static const uint8_t cmds[][9] = {
+      {0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0}, /* SetDioIrqParams */
+      {0x82, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0, 0},    /* SetRx */
+      {0xC0, 0x00, 0, 0, 0, 0, 0, 0, 0},          /* GetStatus */
+      {0x12, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0},    /* GetIrqStatus */
+      {0x15, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0}, /* GetRssiInst */
+      {0x14, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0}, /* GetPacketStatus */
+      {0x13, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0},    /* GetRxBufferStatus */
+      {0x17, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0},    /* GetDeviceErrors */
+  };
+  static const size_t lens[] = {9, 4, 2, 4, 5, 5, 4, 4};
+  /* Two chips rather than one, run through the identical sequence: same
+   * default noise seed, so any difference is the path and not the draw. */
+  vsx_chip* buffered = vsx_create();
+  vsx_chip* clocked = vsx_create();
+  size_t c;
+  int mismatches = 0;
+
+  for (c = 0; c < sizeof(lens) / sizeof(lens[0]); c++) {
+    uint8_t a[16];
+    uint8_t b[16];
+    size_t i;
+
+    memset(a, 0, sizeof(a));
+    memset(b, 0, sizeof(b));
+    vsx_spi_transaction(buffered, cmds[c], a, lens[c]);
+
+    vsx_spi_begin(clocked);
+    for (i = 0; i < lens[c]; i++) {
+      b[i] = vsx_spi_byte(clocked, cmds[c][i]);
+    }
+    vsx_spi_end(clocked);
+
+    if (memcmp(a, b, lens[c]) != 0) {
+      printf("      0x%02x: buffered", cmds[c][0]);
+      for (i = 0; i < lens[c]; i++) {
+        printf(" %02x", a[i]);
+      }
+      printf(", clocked");
+      for (i = 0; i < lens[c]; i++) {
+        printf(" %02x", b[i]);
+      }
+      printf("\n");
+      ++mismatches;
+    }
+  }
+  check(mismatches == 0, "every command answers the same clocked as buffered");
+
+  /* And a write actually takes effect on the byte path, which is the half a
+   * comparison of replies cannot see: a chip that answered identically and ran
+   * nothing would pass everything above. */
+  {
+    vsx_state buffered_state;
+    vsx_state clocked_state;
+    vsx_get_state(buffered, &buffered_state);
+    vsx_get_state(clocked, &clocked_state);
+    check(clocked_state.mode == 1, "a write clocked in byte by byte took effect");
+    check(clocked_state.dio1_mask == buffered_state.dio1_mask,
+          "and left the chip in the same state as the buffered path");
+  }
+
+  vsx_destroy(buffered);
+  vsx_destroy(clocked);
+}
+
 int main(void) {
   vsx_chip* chip;
   vsx_state state;
@@ -129,9 +209,16 @@ int main(void) {
   vsx_spi_transaction(chip, set_rx, NULL, sizeof(set_rx));
   check(1, "vsx_spi_transaction with no reply buffer");
 
+  vsx_spi_begin(NULL);
+  vsx_spi_end(NULL);
+  check(vsx_spi_byte(NULL, 0xC0) == 0, "the byte path tolerates a null handle");
+
   vsx_destroy(chip);
   vsx_destroy(NULL);
   check(1, "vsx_destroy, including of nothing");
+
+  printf("\n  the byte path answers what the buffer path answers\n");
+  byte_path_matches_buffer_path();
 
   printf("\n%s: %d failure(s)\n\n", failures ? "FAILED" : "PASSED", failures);
   return failures ? 1 : 0;
