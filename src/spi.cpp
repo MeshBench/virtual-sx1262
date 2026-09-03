@@ -18,6 +18,16 @@
 //
 // All of them are reads, and none of them changes any state, which is what
 // makes it safe to evaluate a growing prefix on every byte.
+//
+// An opcode missing from this list is not a small mistake. A host that shifts
+// bytes one at a time - which is both emulators, since a real chip select is
+// how they frame a transaction - gets 0x00 back for every data byte of that
+// command, while a host that hands over a whole buffer gets the right answer.
+// The same chip then behaves differently depending on how the caller is
+// plumbed. GetRssiInst was missing, so every emulated board read its receiver
+// as 0: no noise floor, no signal strength, and no entropy in a register the
+// firmware reads eight times to seed its random number generator. Every board
+// came up with the same identity because of this line.
 static bool returnsData(uint8_t op) {
   switch (op) {
     case kReadBuffer:
@@ -25,6 +35,7 @@ static bool returnsData(uint8_t op) {
     case kGetIrqStatus:
     case kGetRxBufferStatus:
     case kGetPacketStatus:
+    case kGetRssiInst:
     case kGetStatus:
     case kGetDeviceErrors:
     case kGetPacketType:
@@ -37,6 +48,9 @@ static bool returnsData(uint8_t op) {
 void VirtualSX1262::beginTransaction() {
   txn_.clear();
   inTxn_ = true;
+  // One draw per transaction, so a command reads the same whichever way the
+  // host frames it, and eight successive reads are still eight fresh samples.
+  refreshNoise();
 }
 
 uint8_t VirtualSX1262::transferByte(uint8_t out) {
@@ -79,6 +93,7 @@ void VirtualSX1262::endTransaction() {
 
 void VirtualSX1262::spiTransfer(const uint8_t* out, size_t len, uint8_t* in) {
   if (len == 0) return;
+  refreshNoise();
   memset(in, 0, len);
   runCommand(out, len, in);
 }
@@ -192,7 +207,21 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
         uint16_t addr = ((uint16_t)out[1] << 8) | out[2];
         for (size_t i = 4; i < len; i++) {
           size_t idx = (size_t)addr + (i - 4);
-          in[i] = idx < sizeof(regs_) ? regs_[idx] : 0;
+          if (idx >= kRegRandomNumber && idx < kRegRandomNumber + 4) {
+            // The random number registers, which are noise and not storage.
+            //
+            // This is where firmware actually gets its entropy: RadioLib's
+            // randomByte() reads this address eight times and keeps the low bit
+            // of each, and MeshCore seeds its PRNG from that and derives its
+            // identity from the PRNG. Backed by the register array like every
+            // other address, it read zero every time, so the seed was zero and
+            // every emulated node came up with the same keypair. Two nRF52
+            // boards reporting one public key is what that looks like from
+            // outside.
+            in[i] = (uint8_t)(noiseBits(8) ^ (uint8_t)(idx - kRegRandomNumber));
+          } else {
+            in[i] = idx < sizeof(regs_) ? regs_[idx] : 0;
+          }
         }
       }
       break;
@@ -249,7 +278,18 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
 
     case kGetRssiInst:
-      if (len >= 3) in[2] = (uint8_t)(-rssi_ * 2);
+      // Half-dBm, with the receiver's own noise on the bottom of it.
+      //
+      // Without the dither this byte is -rssi*2, which is always even, so the
+      // low bit RadioLib samples for entropy is always zero and every node
+      // seeds its PRNG with 0. Two bits is about 1.5 dB of wander, which is the
+      // right order for a receiver sitting on its noise floor and is what makes
+      // eight reads of this register worth eight bits.
+      if (len >= 3) {
+        const int base = (int)(-rssi_ * 2);
+        const int dithered = base + (int)noiseBits(2) - 1;
+        in[2] = (uint8_t)(dithered < 0 ? 0 : (dithered > 255 ? 255 : dithered));
+      }
       break;
 
     case kGetStatus:

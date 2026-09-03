@@ -133,6 +133,17 @@ uint32_t vsx_est_airtime_ms(const vsx_chip* chip, int len_bytes);
  * recovery exists to survive, and the only place the model lies on purpose. */
 void vsx_set_stuck_irq_ms(vsx_chip* chip, uint32_t ms);
 
+/* Seed this chip's receiver noise.
+ *
+ * Firmware helps itself to a radio's noise for entropy - RadioLib reads the
+ * instantaneous RSSI eight times and keeps the low bit of each, and MeshCore
+ * seeds its PRNG from that and derives its identity from the PRNG. Unseeded,
+ * every chip answers alike and every node ends up with the same keypair.
+ *
+ * Give each node a different seed, derived from the run's own seed so the
+ * result is still reproducible. */
+void vsx_set_noise_seed(vsx_chip* chip, uint64_t seed);
+
 /* Semantic version of this ABI, for a host that loads the library at runtime. */
 void vsx_abi_version(int* major, int* minor);
 

@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 1
+#define VSX_ABI_MINOR 2
 
 struct vsx_chip {
   VirtualSX1262 chip;
@@ -197,6 +197,12 @@ uint32_t vsx_est_airtime_ms(const vsx_chip* chip, int len_bytes) {
 void vsx_set_stuck_irq_ms(vsx_chip* chip, uint32_t ms) {
   if (chip) {
     chip->chip.setStuckIrqMs(ms);
+  }
+}
+
+void vsx_set_noise_seed(vsx_chip* chip, uint64_t seed) {
+  if (chip) {
+    chip->chip.setNoiseSeed(seed);
   }
 }
 

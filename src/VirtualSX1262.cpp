@@ -194,6 +194,25 @@ void VirtualSX1262::deliverPending() {
   // driver's channel check reads them to ask "is something arriving now".
 }
 
+// Receiver noise, as a counter-based stream.
+//
+// Counter-based rather than a running generator so it is reproducible from the
+// seed alone and shares no state with anything: the same node in the same run
+// sees the same noise, and two nodes with different seeds see different noise.
+// That second half is the point - firmware derives its identity from this, so a
+// stream every node shares is a keypair every node shares.
+//
+// splitmix64, which is small, has no bad seeds, and passes the only test that
+// matters here: consecutive counters give uncorrelated output, so the low bit
+// of eight successive reads is eight usable bits rather than a pattern.
+void VirtualSX1262::refreshNoise() {
+  uint64_t z = noiseSeed_ + 0x9E3779B97F4A7C15ULL * (++noiseCounter_);
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  z ^= z >> 31;
+  noiseNow_ = (uint32_t)z;
+}
+
 void VirtualSX1262::startRx() {
   mode_ = 1;
   // Arming the receiver is itself a delivery point, not just a change of mode.

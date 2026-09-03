@@ -124,12 +124,28 @@ class VirtualSX1262 {
   // operator set at runtime. The firmware therefore writes the register itself
   // after every AGC reset - we do not have to model what calibration does to
   // silicon to see the fault, only to record what was written.
+  // The random number registers. Noise on the part, and the only entropy a
+  // firmware can get from a radio, so they are generated rather than stored.
+  static constexpr uint16_t kRegRandomNumber = 0x0819;
   static constexpr uint16_t kRegRxGain = 0x08AC;
   static constexpr uint8_t kRxGainBoosted = 0x96;
   static constexpr uint8_t kRxGainPowerSaving = 0x94;
 
   // Advance internal timers to this simulated instant.
   void tick(uint64_t nowMs);
+
+  // Seed this chip's receiver noise.
+  //
+  // Noise is where a radio's entropy comes from, and firmware helps itself to
+  // it: RadioLib's randomByte() reads the instantaneous RSSI eight times and
+  // keeps the low bit of each, and MeshCore seeds its PRNG from that and then
+  // derives its identity from the PRNG. A chip that answers the same number
+  // every time hands every node the same "random" keypair.
+  //
+  // Seeded by the host rather than sampled from the machine, because
+  // determinism is a feature: the same run must produce the same noise. One
+  // seed per node gives every node its own stream.
+  void setNoiseSeed(uint64_t seed) { noiseSeed_ = seed; }
 
   // DIO1's level. Gated on the DIO1 mask, which is not the same thing as the
   // IRQ enable mask, and getting those two the wrong way round is what made an
@@ -257,6 +273,19 @@ class VirtualSX1262 {
   bool headerRaised_ = false;
 
   float rssi_ = -100, snr_ = 0;
+  // Receiver noise: a counter-based stream, so it is reproducible and has no
+  // state shared with anything else. Zero until the host seeds it.
+  uint64_t noiseSeed_ = 0;
+  uint64_t noiseCounter_ = 0;
+  // The noise for the transaction in progress. Held rather than drawn per read
+  // because the byte-at-a-time path re-evaluates a growing prefix on every
+  // byte, and that is only safe while evaluating changes nothing: a value drawn
+  // fresh each time would advance six times down one path and once down the
+  // other, and the same command would answer differently depending on how the
+  // host frames it.
+  uint32_t noiseNow_ = 0;
+  void refreshNoise();
+  uint8_t noiseBits(int bits) const { return (uint8_t)(noiseNow_ & ((1u << bits) - 1)); }
   uint64_t nowMs_ = 0;
 
   // Instrumentation.
