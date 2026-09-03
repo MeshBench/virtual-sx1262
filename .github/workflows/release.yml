@@ -1,0 +1,91 @@
+name: release
+
+# Builds the artefacts MeshBench bundles. Renode loads the shared library at
+# runtime, so that one has to ship per platform in a release the way the
+# emulators and radioserver already do. The static library and header ship
+# beside it for hosts that link at build time.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish under, for a dry run"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-amd64,   os: ubuntu-latest,  shell: bash }
+          - { name: macos-arm64,   os: macos-latest,   shell: bash }
+          - { name: macos-amd64,   os: macos-13,       shell: bash }
+          - { name: windows-amd64, os: windows-latest, shell: "msys2 {0}" }
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        if: matrix.name == 'windows-amd64'
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: build and test
+        env:
+          STRICT: "1"
+        run: ./build.sh
+
+      - name: stage
+        run: |
+          d="virtual-sx1262-${{ matrix.name }}"
+          mkdir -p "$d/include" "$d/lib"
+          cp include/virtual_sx1262.h "$d/include/"
+          cp build/libvirtualsx1262.a "$d/lib/"
+          cp build/libvirtualsx1262.so "$d/lib/" 2>/dev/null || true
+          cp build/libvirtualsx1262.dylib "$d/lib/" 2>/dev/null || true
+          cp build/libvirtualsx1262.dll "$d/lib/" 2>/dev/null || true
+          cp LICENSE NOTICE.md README.md "$d/"
+          tar czf "$d.tar.gz" "$d"
+          # A checksum beside every artefact, because a bundle that fetched a
+          # truncated library would fail as a radio that never answers.
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$d.tar.gz" > "$d.tar.gz.sha256"
+          else
+            shasum -a 256 "$d.tar.gz" > "$d.tar.gz.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: virtual-sx1262-${{ matrix.name }}
+          path: |
+            virtual-sx1262-*.tar.gz
+            virtual-sx1262-*.tar.gz.sha256
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+      - name: attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          ls -la dist
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" --generate-notes dist/* \
+            || gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/*

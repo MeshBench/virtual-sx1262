@@ -4,49 +4,54 @@
 
 #include <math.h>
 
+// The datasheet's own tables, complete rather than trimmed to what is used
+// today. A register map with holes in it is harder to check against the part,
+// and the next opcode this model learns is already named here. [[maybe_unused]]
+// says that on purpose: these are documentation as much as code, so an unused
+// one is not dead code to be deleted.
 // Opcodes, from the SX1262 datasheet. Only the ones RadioLib issues for a LoRa
 // link are handled; anything else is acknowledged and ignored, which is the
 // right default - an unhandled command should cost detail, not wedge a driver.
 namespace {
-constexpr uint8_t kSetSleep = 0x84;
-constexpr uint8_t kSetStandby = 0x80;
-constexpr uint8_t kSetTx = 0x83;
-constexpr uint8_t kSetRx = 0x82;
-constexpr uint8_t kSetCad = 0xC5;
-constexpr uint8_t kSetRfFrequency = 0x86;
-constexpr uint8_t kSetPacketType = 0x8A;
-constexpr uint8_t kGetPacketType = 0x11;
-constexpr uint8_t kSetTxParams = 0x8E;
-constexpr uint8_t kSetModulationParams = 0x8B;
-constexpr uint8_t kSetPacketParams = 0x8C;
-constexpr uint8_t kSetCadParams = 0x88;
-constexpr uint8_t kCalibrate = 0x89;
-constexpr uint8_t kSetBufferBase = 0x8F;
-constexpr uint8_t kWriteBuffer = 0x0E;
-constexpr uint8_t kReadBuffer = 0x1E;
-constexpr uint8_t kWriteRegister = 0x0D;
-constexpr uint8_t kReadRegister = 0x1D;
-constexpr uint8_t kSetDioIrqParams = 0x08;
-constexpr uint8_t kGetIrqStatus = 0x12;
-constexpr uint8_t kClearIrqStatus = 0x02;
-constexpr uint8_t kGetRxBufferStatus = 0x13;
-constexpr uint8_t kGetPacketStatus = 0x14;
-constexpr uint8_t kGetStatus = 0xC0;
-constexpr uint8_t kGetDeviceErrors = 0x17;
-constexpr uint8_t kClearDeviceErrors = 0x07;
-constexpr uint8_t kGetRssiInst = 0x15;
+[[maybe_unused]] constexpr uint8_t kSetSleep = 0x84;
+[[maybe_unused]] constexpr uint8_t kSetStandby = 0x80;
+[[maybe_unused]] constexpr uint8_t kSetTx = 0x83;
+[[maybe_unused]] constexpr uint8_t kSetRx = 0x82;
+[[maybe_unused]] constexpr uint8_t kSetCad = 0xC5;
+[[maybe_unused]] constexpr uint8_t kSetRfFrequency = 0x86;
+[[maybe_unused]] constexpr uint8_t kSetPacketType = 0x8A;
+[[maybe_unused]] constexpr uint8_t kGetPacketType = 0x11;
+[[maybe_unused]] constexpr uint8_t kSetTxParams = 0x8E;
+[[maybe_unused]] constexpr uint8_t kSetModulationParams = 0x8B;
+[[maybe_unused]] constexpr uint8_t kSetPacketParams = 0x8C;
+[[maybe_unused]] constexpr uint8_t kSetCadParams = 0x88;
+[[maybe_unused]] constexpr uint8_t kCalibrate = 0x89;
+[[maybe_unused]] constexpr uint8_t kSetBufferBase = 0x8F;
+[[maybe_unused]] constexpr uint8_t kWriteBuffer = 0x0E;
+[[maybe_unused]] constexpr uint8_t kReadBuffer = 0x1E;
+[[maybe_unused]] constexpr uint8_t kWriteRegister = 0x0D;
+[[maybe_unused]] constexpr uint8_t kReadRegister = 0x1D;
+[[maybe_unused]] constexpr uint8_t kSetDioIrqParams = 0x08;
+[[maybe_unused]] constexpr uint8_t kGetIrqStatus = 0x12;
+[[maybe_unused]] constexpr uint8_t kClearIrqStatus = 0x02;
+[[maybe_unused]] constexpr uint8_t kGetRxBufferStatus = 0x13;
+[[maybe_unused]] constexpr uint8_t kGetPacketStatus = 0x14;
+[[maybe_unused]] constexpr uint8_t kGetStatus = 0xC0;
+[[maybe_unused]] constexpr uint8_t kGetDeviceErrors = 0x17;
+[[maybe_unused]] constexpr uint8_t kClearDeviceErrors = 0x07;
+[[maybe_unused]] constexpr uint8_t kGetRssiInst = 0x15;
 
 // IRQ bits.
-constexpr uint16_t kIrqTxDone = 1 << 0;
-constexpr uint16_t kIrqRxDone = 1 << 1;
-constexpr uint16_t kIrqPreambleDetected = 1 << 2;
-constexpr uint16_t kIrqSyncWordValid = 1 << 3;
-constexpr uint16_t kIrqHeaderValid = 1 << 4;
-constexpr uint16_t kIrqHeaderErr = 1 << 5;
-constexpr uint16_t kIrqCrcErr = 1 << 6;
-constexpr uint16_t kIrqCadDone = 1 << 7;
-constexpr uint16_t kIrqCadDetected = 1 << 8;
-constexpr uint16_t kIrqTimeout = 1 << 9;
+[[maybe_unused]] constexpr uint16_t kIrqTxDone = 1 << 0;
+[[maybe_unused]] constexpr uint16_t kIrqRxDone = 1 << 1;
+[[maybe_unused]] constexpr uint16_t kIrqPreambleDetected = 1 << 2;
+[[maybe_unused]] constexpr uint16_t kIrqSyncWordValid = 1 << 3;
+[[maybe_unused]] constexpr uint16_t kIrqHeaderValid = 1 << 4;
+[[maybe_unused]] constexpr uint16_t kIrqHeaderErr = 1 << 5;
+[[maybe_unused]] constexpr uint16_t kIrqCrcErr = 1 << 6;
+[[maybe_unused]] constexpr uint16_t kIrqCadDone = 1 << 7;
+[[maybe_unused]] constexpr uint16_t kIrqCadDetected = 1 << 8;
+[[maybe_unused]] constexpr uint16_t kIrqTimeout = 1 << 9;
 
 // How far into a transmission a receiver locks onto the preamble, and how much
 // later the header is demodulated. Both are in symbols and become milliseconds
@@ -54,8 +59,8 @@ constexpr uint16_t kIrqTimeout = 1 << 9;
 // like a radio rather than like a constant: at SF12 a preamble takes an age and
 // at SF7 it is gone in a blink, and MeshCore's listen-before-talk times exactly
 // that.
-constexpr double kPreambleSymbols = 4.0;
-constexpr double kHeaderSymbols = 12.0;
+[[maybe_unused]] constexpr double kPreambleSymbols = 4.0;
+[[maybe_unused]] constexpr double kHeaderSymbols = 12.0;
 }  // namespace
 
 VirtualSX1262::VirtualSX1262() {
