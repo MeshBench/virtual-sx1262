@@ -109,6 +109,8 @@ class VirtualSX1262 {
   uint32_t preambleSyms() const { return preambleSyms_; }
   uint32_t freqHz() const { return freqHz_; }
   uint16_t irqMask() const { return irqMask_; }
+  // What is wired out to the DIO1 pin, which is a narrower set than the above.
+  uint16_t dio1Mask() const { return dio1Mask_; }
   uint16_t irqFlags() const { return irq_; }
 
   // Receive gain, at the address the datasheet gives it, with the two values
@@ -129,7 +131,19 @@ class VirtualSX1262 {
   // Advance internal timers to this simulated instant.
   void tick(uint64_t nowMs);
 
-  bool irqAsserted() const { return (irq_ & irqMask_) != 0; }
+  // DIO1's level. Gated on the DIO1 mask, which is not the same thing as the
+  // IRQ enable mask, and getting those two the wrong way round is what made an
+  // emulated board relay about a third of the time.
+  //
+  // RadioLib's startReceive enables RxDone, Timeout, CrcErr, HeaderValid and
+  // HeaderErr in the status register but routes only RxDone to DIO1. Gate the
+  // pin on the enable mask instead and HeaderValid raises DIO1 twelve symbols
+  // into the carrier, well before the frame is handed over. DIO1 is therefore
+  // already high when RxDone arrives, so there is no rising edge - and RadioLib
+  // attaches this pin with GpioInterruptRising. MeshCore's recvRaw is gated on
+  // the flag that interrupt sets, so the packet decodes perfectly and is never
+  // read out of the chip.
+  bool irqAsserted() const { return (irq_ & dio1Mask_) != 0; }
 
   // Frames dropped because the chip was not listening when they were handed
   // over and did not start listening within the grace. A host that sees this
@@ -195,9 +209,10 @@ class VirtualSX1262 {
   // Chip state.
   uint8_t buffer_[256] = {0};
   uint8_t rxLen_ = 0;
-  uint16_t irq_ = 0;      // IRQ status register
-  uint16_t irqMask_ = 0;  // what is allowed to raise DIO1
-  uint8_t mode_ = 0;      // 0 standby, 1 rx, 2 tx, 3 cad
+  uint16_t irq_ = 0;       // IRQ status register
+  uint16_t irqMask_ = 0;   // what is recorded in the IRQ status register
+  uint16_t dio1Mask_ = 0;  // which of those are wired out to the DIO1 pin
+  uint8_t mode_ = 0;       // 0 standby, 1 rx, 2 tx, 3 cad
   uint8_t txBase_ = 0, rxBase_ = 0;
   // How many bytes the firmware said the next transmission is, from
   // SetPacketParams. The buffer is 256 bytes and only this many are on the air.

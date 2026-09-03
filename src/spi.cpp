@@ -198,8 +198,16 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
 
     case kSetDioIrqParams:
+      // [op][IrqMask][Dio1Mask][Dio2Mask][Dio3Mask], two bytes each, MSB first.
+      //
+      // Two masks, and they do different jobs: IrqMask says which events are
+      // recorded in the IRQ status register at all, Dio1Mask says which of those
+      // are wired out to the DIO1 pin. Reading the first and using it as the
+      // second is the whole of a bug that made a board deaf - see the note on
+      // irqAsserted().
       if (len >= 9) {
         irqMask_ = ((uint16_t)out[1] << 8) | out[2];
+        dio1Mask_ = ((uint16_t)out[3] << 8) | out[4];
       }
       break;
 

@@ -104,6 +104,10 @@ typedef struct {
   int8_t tx_power_dbm;
   uint8_t rx_gain_reg;
   uint8_t fem_at_tx; /* 0 never transmitted, 1 module out, 2 module in */
+  /* Which interrupts are wired out to the DIO1 pin, which is a narrower set
+   * than irq_mask: that one says what reaches the status register. Appended at
+   * the end, per the ABI rule, so a host built against 1.0 is unaffected. */
+  uint16_t dio1_mask;
 } vsx_state;
 
 void vsx_get_state(const vsx_chip* chip, vsx_state* out);

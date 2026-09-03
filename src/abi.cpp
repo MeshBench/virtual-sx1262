@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 0
+#define VSX_ABI_MINOR 1
 
 struct vsx_chip {
   VirtualSX1262 chip;
@@ -165,6 +165,7 @@ void vsx_get_state(const vsx_chip* chip, vsx_state* out) {
   out->bandwidth_hz = (uint32_t)(c.bwKHz() * 1000.0f + 0.5f);
   out->preamble_syms = (uint16_t)c.preambleSyms();
   out->irq_mask = c.irqMask();
+  out->dio1_mask = c.dio1Mask();
   out->irq_flags = c.irqFlags();
   out->spreading_factor = (uint8_t)c.sf();
   out->coding_rate = (uint8_t)c.cr();

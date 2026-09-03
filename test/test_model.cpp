@@ -36,8 +36,13 @@ enum {
 };
 
 /* Put the chip in a state a driver would recognise: LoRa at SF8/62.5 kHz, every
- * IRQ unmasked onto DIO1, and receiving. Mirrors what RadioLib's startReceive
- * leaves behind. */
+ * IRQ unmasked onto DIO1, and receiving.
+ *
+ * Deliberately more generous than RadioLib, which routes only RxDone to the
+ * pin, so the cases below can talk about one flag at a time without restating a
+ * mask each time. That generosity is also how a confusion between the two masks
+ * in SetDioIrqParams passed every test here for months, so the case named "only
+ * what is routed to DIO1 raises DIO1" sends the real pair instead. */
 static void bring_up(vsx_chip* c, uint64_t* now) {
   /* SetModulationParams: sf, bw, cr, ldro. 0x1A is the 62.5 kHz code. */
   const uint8_t mod[] = {0x8B, 8, 0x1A, 4, 0};
@@ -235,6 +240,58 @@ int main() {
     vsx_spi_transaction(c, rx, nullptr, sizeof(rx));
     check((irq_flags(c) & IRQ_RX_DONE) != 0, "the SetRx alone hands the frame over");
     check(vsx_dio1_asserted(c) == 1, "and DIO1 is up in that same transaction");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("only what is routed to DIO1 raises DIO1");
+  /* The bug this repository was extracted to fix, and the reason every other
+   * case here missed it: bring_up unmasks everything onto DIO1, which is more
+   * generous than any real driver, so the model could confuse the two masks and
+   * still pass.
+   *
+   * SetDioIrqParams carries IrqMask and then Dio1Mask. RadioLib's startReceive
+   * enables RxDone, Timeout, CrcErr, HeaderValid and HeaderErr in the status
+   * register but routes ONLY RxDone to the pin. Gate the pin on the enable mask
+   * and HeaderValid raises DIO1 twelve symbols into the carrier, so DIO1 is
+   * already high when RxDone lands, there is no rising edge, and a driver that
+   * attached the pin with GpioInterruptRising - which RadioLib does - never
+   * learns the packet exists. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    const uint8_t mod[] = {0x8B, 8, 0x1A, 4, 0};
+    vsx_spi_transaction(c, mod, nullptr, sizeof(mod));
+
+    /* RadioLib's own two masks, not a convenient pair. 0x0272 is
+     * RxDone|HeaderValid|HeaderErr|CrcErr|Timeout; 0x0002 is RxDone alone. */
+    const uint8_t dio[] = {0x08, 0x02, 0x72, 0x00, 0x02, 0, 0, 0, 0};
+    vsx_spi_transaction(c, dio, nullptr, sizeof(dio));
+    const uint8_t rx[] = {0x82, 0xFF, 0xFF, 0xFF};
+    vsx_spi_transaction(c, rx, nullptr, sizeof(rx));
+    vsx_tick(c, ++now);
+
+    vsx_state st;
+    vsx_get_state(c, &st);
+    check(st.irq_mask == 0x0272, "the enable mask is what the driver sent");
+    check(st.dio1_mask == 0x0002, "and the DIO1 mask is the narrower one");
+
+    /* A carrier arrives and is detected. */
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 200; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check((irq_flags(c) & IRQ_HEADER) != 0,
+          "HeaderValid is set, so the channel check can still read it");
+    check(vsx_dio1_asserted(c) == 0, "but HeaderValid does not raise DIO1");
+
+    /* The carrier ends and the frame is handed over. */
+    vsx_set_channel_busy(c, 0);
+    const uint8_t frame[] = {0x11, 0x00, 0xAB, 0xCD};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "RxDone is set on delivery");
+    check(vsx_dio1_asserted(c) == 1, "and RxDone does raise DIO1");
     vsx_destroy(c);
   }
 
