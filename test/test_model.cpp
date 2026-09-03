@@ -213,6 +213,32 @@ int main() {
   }
 
   /* ---------------------------------------------------------------- */
+  CASE("arming the receiver delivers, without waiting to be ticked");
+  /* Delivery used to happen only on a tick, which made every reception depend
+   * on a tick landing after the firmware armed the receiver. A host that ticks
+   * in its own process nearly always got one; a host whose ticks arrive from a
+   * simulator over a socket did not, and the frame went in the bin. Same model,
+   * same calls, different answer depending on the plumbing. No tick here on
+   * purpose: the SetRx alone has to be enough. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+
+    set_standby(c);
+    const uint8_t frame[] = {0x11, 0x00, 0x5A, 0x5A};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now); /* the engine's last tick, while the chip is still deaf */
+    check((irq_flags(c) & IRQ_RX_DONE) == 0, "nothing arrives while it is deaf");
+
+    const uint8_t rx[] = {0x82, 0xFF, 0xFF, 0xFF};
+    vsx_spi_transaction(c, rx, nullptr, sizeof(rx));
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "the SetRx alone hands the frame over");
+    check(vsx_dio1_asserted(c) == 1, "and DIO1 is up in that same transaction");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
   CASE("the chip raises DIO1 instead of waiting to be asked");
   /* The socket this ABI replaces was request-response, so hosts polled the
    * line on a 1 ms timer - a millisecond of latency on every packet, for a
