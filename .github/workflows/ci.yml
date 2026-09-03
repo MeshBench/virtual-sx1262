@@ -1,0 +1,118 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The matrix is the point: four hosts link this, on three operating systems,
+  # with whichever compiler that platform ships. A model that only builds under
+  # the maintainer's gcc is a model three of its hosts cannot use.
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.cc }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  cc: gcc,   cxx: g++ }
+          - { os: ubuntu-latest,  cc: clang, cxx: clang++ }
+          - { os: macos-latest,   cc: clang, cxx: clang++ }
+    steps:
+      - uses: actions/checkout@v4
+      - name: build and test, warnings as errors
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          STRICT: "1"
+        run: ./build.sh
+
+  # Windows is not an afterthought: Renode loads the shared library there, and
+  # this is the platform where a missing export or a C++ism in the header shows
+  # up as a node that configures its radio and then sits there for ever.
+  windows:
+    name: windows / mingw
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            make
+      - name: build and test, warnings as errors
+        env:
+          STRICT: "1"
+        run: ./build.sh
+
+  sanitize:
+    name: sanitizers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: address and undefined behaviour
+        env:
+          CXX: clang++
+          STRICT: "1"
+        run: ./build.sh sanitize
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: formatting is not a review comment
+        run: |
+          clang-format --version
+          clang-format --dry-run --Werror \
+            include/virtual_sx1262.h src/abi.cpp test/test_model.cpp test/test_c_abi.c
+
+  # The rules in CLAUDE.md are only rules if something checks them.
+  house-rules:
+    name: house rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: no dependency outside the standard library
+        run: |
+          # The whole licence argument rests on this. Anything angle-included
+          # that is not a C or C++ standard header is a new dependency.
+          bad=$(grep -rhoE '#include <[^>]+>' include src \
+                | sed -E 's/#include <([^>]+)>/\1/' \
+                | sort -u \
+                | grep -vE '^(c?(stdint|stddef|stdio|stdlib|string|math|assert)(\.h)?|cstring|cstdio|cstdlib|cstdint|cstddef|cmath|cassert|new|vector|deque|algorithm|utility|limits|type_traits)$' || true)
+          if [ -n "$bad" ]; then
+            echo "non-standard include(s) in the model or ABI:"; echo "$bad"; exit 1
+          fi
+          echo "only standard headers"
+      - name: file length limits
+        run: |
+          fail=0
+          for f in include/*.h src/* test/*; do
+            n=$(wc -l < "$f")
+            if [ "$n" -gt 500 ]; then echo "$f: $n lines, over the 500 hard limit"; fail=1; fi
+          done
+          [ "$fail" = 0 ] && echo "every file inside 500 lines"
+          exit $fail
+      - name: no em-dashes
+        run: |
+          if grep -rlP '\x{2014}|\x{2013}' include src test *.md 2>/dev/null; then
+            echo "em-dash or en-dash found; use a comma, colon, stop or spaced hyphen"; exit 1
+          fi
+          echo "clean"
+      - name: build artifacts are never tracked
+        run: |
+          if git ls-files | grep -qE '^build/|\.(o|a|so|dylib|dll)$'; then
+            echo "a build artifact is tracked"; exit 1
+          fi
+          echo "clean"
