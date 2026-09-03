@@ -97,6 +97,19 @@ from the header. So:
   goes.
 - **`RxDone` is latched; the detection flags are not.** A completed packet waits
   for the firmware to read it. A carrier does not wait for anything.
+- **The IRQ enable mask and the DIO1 mask are different fields, and DIO1 is a
+  level.** `SetDioIrqParams` gives `IrqMask` first and then `Dio1Mask`; the first
+  says what reaches the status register, the second says what reaches the pin.
+  RadioLib enables `RxDone`, `Timeout`, `CrcErr`, `HeaderValid` and `HeaderErr`
+  but routes only `RxDone`. Gate the pin on the enable mask and `HeaderValid`
+  raises DIO1 part-way through the carrier, so the pin is already high when
+  `RxDone` lands: no rising edge, and RadioLib attaches DIO1 with
+  `GpioInterruptRising`, so the firmware never learns the packet exists. The
+  board then hears everything and forwards nothing, intermittently, depending on
+  how the host paces its ticks. **Anything that changes when DIO1 goes high needs
+  a test that sends a real driver's mask pair** - the shared test setup unmasks
+  everything onto the pin, which is more generous than any driver and hid this
+  for months.
 - **A frame handed over while the chip is not listening is lost, not queued.**
   Bounded by a short grace, because a real driver's re-arm is standby, configure,
   `SetRx`, and a frame landing in that gap is genuinely receivable. Beyond it,
@@ -115,7 +128,11 @@ from the header. So:
 ## Tests
 
 **Every bug fixed gets the test that would have caught it**, named after what
-went wrong rather than after the function. The four cases in `test_model.cpp` are
+went wrong rather than after the function, and **check that it fails without the
+fix** rather than assuming it would. The two-mask fault was already covered by
+five passing cases about DIO1; what they had in common was a setup more generous
+than any real driver, so the assertion has to be made against what the firmware
+actually sends. The four cases in `test_model.cpp` are
 each a bug that previously took a four minute emulated boot to see; that is the
 standard, and it is why this repository exists separately at all.
 
