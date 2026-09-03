@@ -94,6 +94,10 @@ int main(void) {
 
   vsx_get_state(chip, &state);
   check(state.mode == 1, "vsx_get_state reports receive mode");
+  /* The field appended in ABI 1.1. Checked from C because a struct that grew is
+   * exactly where a host built against the old header and a library built
+   * against the new one disagree, and two of the four hosts are not C++. */
+  check(state.dio1_mask == 0xFFFF, "vsx_get_state reports the DIO1 mask");
 
   vsx_get_counters(chip, &counters);
   check(counters.frames_dropped == 0, "vsx_get_counters");
