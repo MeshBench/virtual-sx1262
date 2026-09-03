@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Weekly, for the consumers job alone: a pin that lags is not visible on any
+  # push, because on the push that creates a commit the pin cannot have moved
+  # to it yet.
+  schedule:
+    - cron: '17 6 * * 1'
 
 permissions:
   contents: read
@@ -131,3 +136,78 @@ jobs:
             echo "a build artifact is tracked"; exit 1
           fi
           echo "clean"
+
+  # Who is still running an older chip than this one.
+  #
+  # Every host pins this repository by commit, and a commit does not follow a
+  # branch, so merging here reaches nobody. The consumer keeps building and
+  # keeps passing, on the model it recorded. That is not hypothetical: the DIO1
+  # routing fix was correct here for a day while every host still had the commit
+  # before it, and the boards went on forwarding nothing.
+  #
+  # Advisory on a push, because the pin cannot have moved to a commit that did
+  # not exist when the run started. Fatal on the weekly run and on demand, by
+  # which time it should have.
+  consumers:
+    name: consumers are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: what each consumer pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(git rev-parse HEAD)
+          lagging=0
+          {
+            echo "### What each consumer pins"
+            echo
+            echo "This repository is at \`${head:0:12}\`."
+            echo
+            echo "| consumer | pinned | behind | oldest missing |"
+            echo "|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          while IFS=$'\t' read -r repo path; do
+            case "$repo" in ''|'#'*) continue ;; esac
+            # A submodule reads back through the contents API as a "submodule"
+            # entry whose sha is the recorded gitlink, which is the pin.
+            pin=$(gh api "repos/$repo/contents/$path" --jq '.sha' 2>/dev/null || true)
+            if [ -z "$pin" ]; then
+              echo "| \`$repo\` | **unreadable** | ? | \`$path\` is not a submodule there |" >> "$GITHUB_STEP_SUMMARY"
+              lagging=1
+              continue
+            fi
+            if [ "$pin" = "$head" ]; then
+              echo "| \`$repo\` | \`${pin:0:12}\` | current | |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            # Count and name what the consumer has not got. A pin we cannot find
+            # in our own history is a fork or a rewritten branch, not a lag.
+            if git cat-file -e "$pin^{commit}" 2>/dev/null; then
+              behind=$(git rev-list --count "$pin..HEAD")
+              missing=$(git log --format='%s' "$pin..HEAD" | tail -1)
+            else
+              behind="unknown"
+              missing="pin is not a commit in this repository"
+            fi
+            echo "| \`$repo\` | \`${pin:0:12}\` | $behind | $missing |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::$repo pins ${pin:0:12}, $behind commits behind: $missing"
+            lagging=1
+          done < consumers.tsv
+          if [ "$lagging" = 0 ]; then
+            echo "every consumer is on this commit"
+            exit 0
+          fi
+          {
+            echo
+            echo "Move each pin, then boot a board and watch it forward. A green"
+            echo "build here says the chip is right on its own terms and nothing"
+            echo "about the firmware above it."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event_name }}" = push ]; then
+            echo "advisory on a push: the pin cannot have moved to this commit yet"
+            exit 0
+          fi
+          exit 1

@@ -1,0 +1,16 @@
+# Every repository that pins this one as a submodule, and where the pin is.
+#
+# A submodule is a commit, not a branch, so pushing to main here changes nothing
+# anywhere else: each consumer keeps the commit it recorded, builds, passes its
+# tests, and runs the old chip until somebody moves it. Nothing detects that -
+# there is no version to compare and no resolver to complain - and the symptom
+# is a board behaving the way it did before the fix, which is exactly what
+# somebody chasing the fix expects to be looking at.
+#
+# So this file exists to be read by ci.yml's `consumers` job, which asks GitHub
+# what each row pins and says which ones lag. A consumer left out of it is a
+# consumer that silently stays behind for ever; add the row in the same commit
+# that adds the submodule.
+#
+# repository<TAB>path to the submodule in it
+MeshBench/meshcore-native	vendor/virtual-sx1262

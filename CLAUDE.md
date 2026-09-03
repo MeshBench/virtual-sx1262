@@ -84,6 +84,31 @@ from the header. So:
 - **The C++ class is not the ABI.** Hosts hold an opaque pointer. Rearranging the
   class is free; changing the header is not.
 
+## Merging here changes nothing anywhere else
+
+Every host pins this repository as a **submodule**, and a submodule is a commit,
+not a branch. So a fix merged here reaches no host at all: each one keeps the
+commit it recorded, builds, passes its own tests, and goes on running the old
+chip until somebody moves the pin.
+
+Nothing detects it. There is no version to compare and no resolver to complain,
+and the symptom of a stale pin is a board behaving exactly the way it did before
+the fix, which is what whoever is chasing the fix expects to be looking at
+anyway. The DIO1 routing mask is the worked example: correct here for a day
+while every host still had the commit before it, and the boards forwarded
+nothing the whole time.
+
+**A change here is finished when the pins have moved**, not when it merges.
+`consumers.tsv` lists them and CI's `consumers` job asks GitHub what each one
+records, so add the row in the same commit that adds a host. It is advisory on a
+push, because a pin cannot point at a commit that did not exist yet, and fatal
+on the weekly run.
+
+Moving a pin is not proving one. Bump it, then boot an emulated board and watch
+it forward. Green tests here say the chip is right on its own terms; they say
+nothing about the firmware above it, which is the only thing that ever caught
+any of these.
+
 ## Domain rules that are easy to get wrong
 
 - **This models a chip, not the air.** It is told "a carrier is present" and
