@@ -74,8 +74,9 @@ jobs:
       - name: formatting is not a review comment
         run: |
           clang-format --version
-          clang-format --dry-run --Werror \
-            include/virtual_sx1262.h src/abi.cpp test/test_model.cpp test/test_c_abi.c
+          # Globbed rather than listed: a file added to src/ and left out of a
+          # list here is unformatted and CI says nothing.
+          clang-format --dry-run --Werror include/*.h src/*.h src/*.cpp test/*
 
   # The rules in CLAUDE.md are only rules if something checks them.
   house-rules:

@@ -35,7 +35,7 @@ CXXFLAGS="-std=c++17 -O2 -Iinclude -Isrc $WARN ${CXXFLAGS}"
 CFLAGS_C="-std=c11 -O2 -Iinclude -Wall -Wextra -Wpedantic ${CFLAGS}"
 [ -n "$STRICT" ] && CFLAGS_C="$CFLAGS_C -Werror"
 
-SRC="src/VirtualSX1262.cpp src/abi.cpp"
+SRC="src/VirtualSX1262.cpp src/spi.cpp src/abi.cpp"
 
 case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) SHARED_EXT=dll ;;
@@ -92,7 +92,6 @@ case "${1:-all}" in
     $CXX $CXXFLAGS $SAN $SRC test/test_model.cpp -o "$OUT/test_model_san"
     # The C test gets the same treatment. Its own stack overflow is what proved
     # this needed to cover both binaries rather than just the C++ one.
-    $CXX $CXXFLAGS $SAN -fPIC -c $SRC -o /dev/null 2>/dev/null || true
     $CC $CFLAGS_C $SAN -Iinclude test/test_c_abi.c $SRC -lstdc++ -lm -o "$OUT/test_c_abi_san" 2>/dev/null \
       || $CXX $CXXFLAGS $SAN -x c++ test/test_c_abi.c $SRC -o "$OUT/test_c_abi_san"
     ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/test_model_san"

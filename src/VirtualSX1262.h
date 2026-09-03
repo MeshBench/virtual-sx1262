@@ -51,7 +51,10 @@ class VirtualSX1262 {
   void setChannelBusy(bool busy);
 
   // What the engine measured for the last frame it delivered.
-  void setLastSignal(float rssiDbm, float snrDb) { rssi_ = rssiDbm; snr_ = snrDb; }
+  void setLastSignal(float rssiDbm, float snrDb) {
+    rssi_ = rssiDbm;
+    snr_ = snrDb;
+  }
 
   // ---- what the firmware has configured this radio to be ----
   //
@@ -99,7 +102,7 @@ class VirtualSX1262 {
   // Reported wholesale rather than field by field as each becomes interesting:
   // the expensive part is the wire format, and widening it once costs less than
   // widening it five times.
-  uint8_t mode() const { return mode_; }          // 0 standby, 1 rx, 2 tx, 3 cad
+  uint8_t mode() const { return mode_; }  // 0 standby, 1 rx, 2 tx, 3 cad
   int sf() const { return sf_; }
   float bwKHz() const { return bwKHz_; }
   int cr() const { return cr_; }
@@ -186,6 +189,7 @@ class VirtualSX1262 {
   void startTx();
   void startCad();
   uint64_t inboxGraceMs() const;
+  void settleInbox();
   void deliverPending();
 
   // Chip state.
