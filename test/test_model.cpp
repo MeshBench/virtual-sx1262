@@ -175,6 +175,44 @@ int main() {
   }
 
   /* ---------------------------------------------------------------- */
+  CASE("the wait a frame gets is the time its signal was on the air");
+  /* The bound on that wait started life as a fixed 10 ms and that was the wrong
+   * shape: the hosts advance this clock at their own rate, so a constant that
+   * is generous against one is tight against another and drops a frame that was
+   * genuinely receivable. It is derived from the frame's own airtime now. This
+   * pins that, because a regression to a small constant passes both tests above
+   * and quietly loses packets in the host that matters. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+
+    /* A full-length advert: hundreds of milliseconds on the air at SF8. */
+    uint8_t frame[119];
+    std::memset(frame, 0xA5, sizeof(frame));
+    const uint32_t air = vsx_est_airtime_ms(c, (int)sizeof(frame));
+    check(air > 100, "a 119-byte frame at SF8 is hundreds of ms on the air");
+
+    set_standby(c);
+    vsx_deliver_frame(c, frame, sizeof(frame));
+
+    /* Well past any fixed small constant, still inside the airtime. */
+    for (uint32_t i = 0; i < air / 2; ++i) {
+      vsx_tick(c, ++now);
+    }
+    vsx_counters k;
+    vsx_get_counters(c, &k);
+    check(k.frames_dropped == 0, "half an airtime into a re-arm it is still held");
+
+    const uint8_t rx[] = {0x82, 0xFF, 0xFF, 0xFF};
+    vsx_spi_transaction(c, rx, nullptr, sizeof(rx));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0,
+          "and it is delivered when listening resumes");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
   CASE("the chip raises DIO1 instead of waiting to be asked");
   /* The socket this ABI replaces was request-response, so hosts polled the
    * line on a 1 ms timer - a millisecond of latency on every packet, for a

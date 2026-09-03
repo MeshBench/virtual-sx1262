@@ -185,6 +185,7 @@ class VirtualSX1262 {
   void startRx();
   void startTx();
   void startCad();
+  uint64_t inboxGraceMs() const;
   void deliverPending();
 
   // Chip state.
@@ -230,9 +231,10 @@ class VirtualSX1262 {
   bool inboxWasOccupied_ = false;
   uint64_t inboxSinceMs_ = 0;
   uint32_t framesDropped_ = 0;
-  // Generous for a standby -> configure -> SetRx re-arm, far below the
-  // seconds-scale staleness this bounds.
-  static constexpr uint64_t kInboxGraceMs = 10;
+  // The floor under that bound, for a frame so short its airtime is measured in
+  // single milliseconds. Comfortably longer than a standby -> configure -> SetRx
+  // re-arm and still nowhere near the seconds-scale staleness being bounded.
+  static constexpr uint64_t kInboxGraceFloorMs = 50;
   bool headerRaised_ = false;
 
   float rssi_ = -100, snr_ = 0;

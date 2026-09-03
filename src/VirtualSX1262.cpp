@@ -138,7 +138,7 @@ void VirtualSX1262::tick(uint64_t nowMs) {
   // late was carried by the signal that has already ended.
   if (mode_ == 1) {
     deliverPending();
-  } else if (!inbox.empty() && nowMs_ - inboxSinceMs_ > kInboxGraceMs) {
+  } else if (!inbox.empty() && nowMs_ - inboxSinceMs_ > inboxGraceMs()) {
     inbox.clear();
     framesDropped_++;
   }
@@ -194,6 +194,24 @@ void VirtualSX1262::transmitFinished() {
     irq_ |= kIrqTxDone;
     mode_ = 0;
   }
+}
+
+// How long a frame the chip could not take may wait for it to start listening.
+//
+// Derived from the signal rather than picked: the packet occupied the air for
+// its airtime, so a receiver that starts listening inside that window was
+// plausibly listening for part of the transmission and can be given it. Past
+// it the carrier is definitively gone, and anything delivered later would be a
+// packet arriving after the air that carried it went quiet.
+//
+// A fixed number of milliseconds was the first attempt and it was the wrong
+// shape. The hosts advance this clock at their own rate - an emulated board
+// runs on its own time, not the simulator's - so a constant that looks generous
+// against one host is tight against another, and a frame that was genuinely
+// receivable gets dropped.
+uint64_t VirtualSX1262::inboxGraceMs() const {
+  const uint64_t air = inbox.empty() ? 0 : estAirtimeMs((int)inbox.front().size());
+  return air > kInboxGraceFloorMs ? air : kInboxGraceFloorMs;
 }
 
 void VirtualSX1262::deliverPending() {
