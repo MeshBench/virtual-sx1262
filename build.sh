@@ -37,10 +37,35 @@ CFLAGS_C="-std=c11 -O2 -Iinclude -Wall -Wextra -Wpedantic ${CFLAGS}"
 
 SRC="src/VirtualSX1262.cpp src/spi.cpp src/abi.cpp"
 
+# SHARED_RUNTIME is the toolchain runtime the shared build links against.
+#
+# Windows takes it statically. The DLL is opened by an emulator at run time -
+# QEMU through LoadLibrary, Renode through LoadLibraryW behind a P/Invoke - on a
+# machine that has never had a toolchain on it. Linked the default way it
+# imports libstdc++-6.dll, which exists inside MSYS2 and almost nowhere else, so
+# the build and its tests pass on the runner and the library cannot be opened
+# on the target:
+#
+#   qemu-system-xtensa.exe: sx1262: cannot load the chip model at
+#   ...\libvirtualsx1262.dll: The specified module could not be found.
+#
+# That message names this DLL rather than the dependency it could not find,
+# which is why it reads as a missing library rather than a missing runtime.
+#
+# Shipping the runtime beside this file does not fix it: Windows resolves a
+# dynamically loaded DLL's own imports from the loading *process's* directory,
+# not from the directory of the DLL being loaded, so a copy would have to sit
+# next to every host that opens us. Static is the only version that travels.
+# -static rather than -static-libstdc++, because libstdc++ brings
+# libwinpthread-1.dll in behind it and the pair have to go together.
+#
+# Linux and macOS keep the dynamic link. libstdc++ is part of the base system
+# on both, and a plugin carrying its own copy into a host process that already
+# has one is the worse bet.
 case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*) SHARED_EXT=dll ;;
-  Darwin)               SHARED_EXT=dylib ;;
-  *)                    SHARED_EXT=so ;;
+  MINGW*|MSYS*|CYGWIN*) SHARED_EXT=dll;   SHARED_RUNTIME="-static" ;;
+  Darwin)               SHARED_EXT=dylib; SHARED_RUNTIME="" ;;
+  *)                    SHARED_EXT=so;    SHARED_RUNTIME="" ;;
 esac
 
 mkdir -p "$OUT"
@@ -56,8 +81,35 @@ build_static() {
 }
 
 build_shared() {
-  $CXX $CXXFLAGS -fPIC -fno-exceptions -shared $SRC -o "$OUT/libvirtualsx1262.$SHARED_EXT"
+  $CXX $CXXFLAGS -fPIC -fno-exceptions -shared $SRC $SHARED_RUNTIME \
+    -o "$OUT/libvirtualsx1262.$SHARED_EXT"
   echo "built $OUT/libvirtualsx1262.$SHARED_EXT"
+  check_shared_imports
+}
+
+# The last time this went wrong the build was green, the tests passed, the
+# artefact was the right size and nothing could open it. So the build now says
+# what its own product needs rather than leaving that to be found on somebody
+# else's machine. kernel32 and msvcrt are on every supported Windows; anything
+# else is a file that has to travel with us, and does not.
+check_shared_imports() {
+  [ "$SHARED_EXT" = dll ] || return 0
+  if ! command -v objdump >/dev/null 2>&1; then
+    echo "build.sh: no objdump, so the DLL's imports went unchecked" >&2
+    return 0
+  fi
+  stray=$(objdump -p "$OUT/libvirtualsx1262.dll" \
+    | sed -n 's/^	DLL Name: //p' \
+    | tr 'A-Z' 'a-z' | sort -u \
+    | grep -v -e '^kernel32\.dll$' -e '^msvcrt\.dll$' || true)
+  if [ -n "$stray" ]; then
+    echo "build.sh: the DLL imports something that will not be on the target:" >&2
+    echo "$stray" | sed 's/^/  /' >&2
+    echo "  a host opening it gets \"The specified module could not be found\"," >&2
+    echo "  naming this DLL rather than the one above." >&2
+    exit 1
+  fi
+  echo "checked $OUT/libvirtualsx1262.dll: nothing imported beyond kernel32 and msvcrt"
 }
 
 # One binary per subject rather than one big one, because the house limit on
