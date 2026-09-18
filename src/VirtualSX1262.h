@@ -207,6 +207,40 @@ class VirtualSX1262 {
   uint32_t syncMismatches() const { return syncMismatches_; }
   uint32_t paramsRejected() const { return paramsRejected_; }
 
+  // ---- what the rest of the command set was told ----
+  //
+  // Most of these are recorded rather than acted on, and each says which it is
+  // where it is applied. Recording is not a lesser answer: the fault this model
+  // exists to catch is a firmware configured differently from how its operator
+  // believes, and a value nobody can read back is a value nobody can check.
+
+  uint8_t packetType() const { return packetType_; }
+  uint8_t fallbackMode() const { return fallbackMode_; }
+  uint8_t regulatorMode() const { return regulatorMode_; }
+  bool dio2AsRfSwitch() const { return dio2AsRfSwitch_; }
+  bool dio3AsTcxo() const { return dio3AsTcxo_; }
+  uint8_t paDutyCycle() const { return paDutyCycle_; }
+  uint8_t paHpMax() const { return paHpMax_; }
+  uint8_t paDeviceSel() const { return paDeviceSel_; }
+  uint8_t symbNumTimeout() const { return symbNumTimeout_; }
+  bool stopTimerOnPreamble() const { return stopTimerOnPreamble_; }
+  uint32_t rxDutyRxPeriod() const { return rxDutyRxPeriod_; }
+  uint32_t rxDutySleepPeriod() const { return rxDutySleepPeriod_; }
+  bool txContinuousWave() const { return txContinuousWave_; }
+  bool txInfinitePreamble() const { return txInfinitePreamble_; }
+
+  // Packet parameters beyond the two that were already read. All three change
+  // airtime, and all three were assumed rather than read.
+  bool headerImplicit() const { return headerImplicit_; }
+  bool crcOn() const { return crcOn_; }
+  bool invertIq() const { return invertIq_; }
+
+  // GetStats' three counters. Received is real; the other two can only move
+  // through deliverFrameFailed(), which nothing calls yet.
+  uint16_t statRxPackets() const { return statRxPackets_; }
+  uint16_t statCrcErrors() const { return statCrcErrors_; }
+  uint16_t statHeaderErrors() const { return statHeaderErrors_; }
+
   // The LoRa sync word, from the two registers the firmware writes it into.
   //
   // Read out of the register array rather than shadowed, because the firmware
@@ -218,6 +252,26 @@ class VirtualSX1262 {
   // Hand over a frame whose transmitter's sync word is known, so the chip can
   // refuse one that was not meant for this network.
   void deliverFrameFrom(const uint8_t* frame, size_t len, uint16_t syncWordSent);
+
+  // Hand over a frame the receiver got but could not trust.
+  //
+  // PLACEHOLDER INTERFACE. The chip cannot decide this: whether a frame's CRC
+  // checks depends on what actually arrived at the antenna, which is the
+  // engine's business. So the caller says, and this is the entry point that was
+  // missing for CrcErr and HeaderErr to be raisable at all. What is not settled
+  // is who calls it: under calculated RF a frame arrives whole or not at all
+  // and nothing ever will, and under waveform RF the demodulator genuinely can
+  // fail a CRC but nothing in MeshBench is wired to say so. Until a host calls
+  // it, these two flags remain unreachable in practice and the firmware's error
+  // paths stay unexercised.
+  void deliverFrameFailed(const uint8_t* frame, size_t len, uint8_t failure);
+
+  // Every path a frame reaches the chip by, in one place.
+  //
+  // inbox is still public because hosts push into it directly and making it
+  // private breaks them. That is the hole: a host that pushes walks around the
+  // sync-word check and will walk around the next one too. New callers use this.
+  void deliverFrame(const uint8_t* frame, size_t len);
 
   // Whether the modem is spending two bits a symbol on low data rate
   // optimisation, from what the firmware programmed rather than from the
@@ -266,6 +320,12 @@ class VirtualSX1262 {
   void applyModulation(const uint8_t* p, size_t n);
   void applyPacketParams(const uint8_t* p);
   void applyCadParams(const uint8_t* p);
+  // The commands that were missing, decoded in commands.cpp.
+  bool runExtraCommand(uint8_t op, const uint8_t* out, size_t len, uint8_t* in);
+  void applyPaConfig(const uint8_t* p);
+  void applyRxDutyCycle(const uint8_t* p);
+  void applyFallback();
+  uint8_t statusByte() const;
   void startRx(uint32_t timeoutRaw);
   void startTx(uint32_t timeoutRaw);
   void startCad();
@@ -399,6 +459,49 @@ class VirtualSX1262 {
   uint32_t cadDetections_ = 0;
   uint32_t syncMismatches_ = 0;
   uint32_t paramsRejected_ = 0;
+
+  // ---- the rest of the command set ----
+  //
+  // Reset values throughout, so a chip nobody has configured reads as the part
+  // does rather than as zero. Zero is a legitimate setting for several of these
+  // and inventing it hides a firmware that never set one.
+  uint8_t packetType_ = 0x01;     // LoRa; the only type with a data path here
+  uint8_t fallbackMode_ = 0x20;   // STDBY_RC, the part's reset value
+  uint8_t regulatorMode_ = 0x00;  // LDO
+  bool dio2AsRfSwitch_ = false;
+  bool dio3AsTcxo_ = false;
+  uint8_t paDutyCycle_ = 0;
+  uint8_t paHpMax_ = 0;
+  uint8_t paDeviceSel_ = 0;
+  uint8_t paLut_ = 1;
+  uint8_t symbNumTimeout_ = 0;
+  bool stopTimerOnPreamble_ = false;
+  uint32_t rxDutyRxPeriod_ = 0;
+  uint32_t rxDutySleepPeriod_ = 0;
+  bool txContinuousWave_ = false;
+  bool txInfinitePreamble_ = false;
+
+  // SetPacketParams' remaining fields. Defaults are RadioLib's: explicit
+  // header, CRC on, IQ not inverted.
+  bool headerImplicit_ = false;
+  bool crcOn_ = true;
+  bool invertIq_ = false;
+
+  // GetStats. uint16 because that is the width the command answers in, and a
+  // counter that wraps the way the part's does is a counter a firmware can be
+  // tested against.
+  uint16_t statRxPackets_ = 0;
+  uint16_t statCrcErrors_ = 0;
+  uint16_t statHeaderErrors_ = 0;
+
+  // GetDeviceErrors' word.
+  //
+  // PLACEHOLDER. Nothing sets it, because every error it can report is an
+  // analogue or calibration fault this model does not have: PLL lock, image
+  // calibration, XOSC start, PA ramp. A host that wants to exercise the
+  // firmware's handling of one needs a way to inject it, and that entry point
+  // is not here because nothing has asked for it yet.
+  uint16_t deviceErrors_ = 0;
   uint64_t lastBusyTickMs_ = 0;
 
   // Fault injection: how long a raised flag refuses to clear. 0 is a chip that

@@ -41,6 +41,8 @@ enum {
   IRQ_PREAMBLE = 1u << 2,
   IRQ_SYNC_WORD = 1u << 3,
   IRQ_HEADER = 1u << 4,
+  IRQ_HEADER_ERR = 1u << 5,
+  IRQ_CRC_ERR = 1u << 6,
   IRQ_CAD_DONE = 1u << 7,
   IRQ_CAD_DETECTED = 1u << 8,
   IRQ_TIMEOUT = 1u << 9,

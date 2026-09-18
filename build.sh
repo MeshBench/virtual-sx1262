@@ -35,7 +35,7 @@ CXXFLAGS="-std=c++17 -O2 -Iinclude -Isrc $WARN ${CXXFLAGS}"
 CFLAGS_C="-std=c11 -O2 -Iinclude -Wall -Wextra -Wpedantic ${CFLAGS}"
 [ -n "$STRICT" ] && CFLAGS_C="$CFLAGS_C -Werror"
 
-SRC="src/VirtualSX1262.cpp src/cad.cpp src/spi.cpp src/abi.cpp"
+SRC="src/VirtualSX1262.cpp src/cad.cpp src/commands.cpp src/spi.cpp src/abi.cpp"
 
 # SHARED_RUNTIME is the toolchain runtime the shared build links against.
 #
@@ -115,7 +115,7 @@ check_shared_imports() {
 # One binary per subject rather than one big one, because the house limit on
 # file length applies to tests too and a single file had already outgrown it.
 # They share test/harness.h and nothing else, so each counts its own failures.
-TESTS="test_reception test_interrupts test_spi test_cad test_modem"
+TESTS="test_reception test_interrupts test_spi test_cad test_modem test_commands"
 
 build_tests() {
   for t in $TESTS; do

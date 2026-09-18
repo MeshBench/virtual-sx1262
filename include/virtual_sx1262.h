@@ -108,6 +108,20 @@ void vsx_deliver_frame(vsx_chip* chip, const uint8_t* frame, size_t len);
 void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
                             uint16_t sync_word);
 
+/* A frame the receiver got and could not trust. `failure` is 1 for a CRC error
+ * and 2 for a header error.
+ *
+ * PLACEHOLDER INTERFACE, and the only way CrcErr or HeaderErr can be raised at
+ * all. The chip cannot decide this: whether a frame's CRC checks depends on
+ * what arrived at the antenna, which the simulator owns. Nothing calls this
+ * yet, so both flags stay unreachable in practice and the firmware's error
+ * paths stay unexercised: under calculated RF a frame arrives whole or not at
+ * all and nothing ever will, and under waveform RF the demodulator genuinely
+ * can fail a CRC but nothing is wired to say so. A CRC failure delivers the
+ * corrupt payload and raises RxDone beside CrcErr, as the part does. */
+void vsx_deliver_frame_failed(vsx_chip* chip, const uint8_t* frame, size_t len,
+                              uint8_t failure);
+
 /* The waveform the chip started has finished on the air. The chip cannot know
  * this: how long a transmission occupied the channel is a property of the
  * samples the simulator generated. */
@@ -165,6 +179,27 @@ typedef struct {
    * and so changes every airtime this chip quotes, and because a firmware that
    * never programs it is a different case from one that programs it off. */
   uint8_t low_data_rate_optimize;
+  /* The rest of the command set, as the firmware programmed it. Most of these
+   * are recorded rather than acted on; src/commands.cpp says which is which for
+   * each one, and a host reading a value here is reading what was asked for,
+   * not a claim that the model obeyed it. */
+  uint8_t packet_type;       /* 0 GFSK, 1 LoRa, 3 LR-FHSS; only LoRa runs */
+  uint8_t fallback_mode;     /* 0x20 STDBY_RC, 0x30 STDBY_XOSC, 0x40 FS */
+  uint8_t regulator_mode;    /* recorded only; this model has no current */
+  uint8_t dio2_as_rf_switch; /* recorded; the FEM line is host-driven here */
+  uint8_t dio3_as_tcxo;      /* recorded only */
+  uint8_t pa_duty_cycle;     /* recorded; with pa_hp_max this is half of */
+  uint8_t pa_hp_max;         /* what sets output power on silicon, and the */
+  uint8_t pa_device_sel;     /* board owns the other half */
+  uint8_t symb_num_timeout;  /* a receive deadline counted in symbols */
+  uint8_t stop_timer_on_preamble;
+  uint8_t tx_continuous_wave; /* a bare carrier; the host must put it on air */
+  uint8_t tx_infinite_preamble;
+  uint8_t header_implicit; /* the three SetPacketParams fields that were */
+  uint8_t crc_on;          /* discarded, all of which change airtime */
+  uint8_t invert_iq;
+  uint32_t rx_duty_rx_period; /* recorded; the receiver does not sleep */
+  uint32_t rx_duty_sleep_period;
 } vsx_state;
 
 void vsx_get_state(const vsx_chip* chip, vsx_state* out);
@@ -192,6 +227,12 @@ typedef struct {
    * word receives nothing and reports nothing wrong. */
   uint32_t sync_mismatches;
   uint32_t params_rejected;
+  /* GetStats' three counters, as the firmware reads them. rx_packets is real;
+   * the other two can only move through vsx_deliver_frame_failed, which nothing
+   * calls, so a firmware polling them sees zero however bad the channel is. */
+  uint16_t stat_rx_packets;
+  uint16_t stat_crc_errors;
+  uint16_t stat_header_errors;
 } vsx_counters;
 
 void vsx_get_counters(const vsx_chip* chip, vsx_counters* out);

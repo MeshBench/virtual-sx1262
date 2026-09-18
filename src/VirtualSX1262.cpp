@@ -94,7 +94,7 @@ void VirtualSX1262::tick(uint64_t nowMs) {
   // trusts it believes the channel is busy for ever and stops transmitting.
   // That is the difference between MeshCore 1.16 and 1.17, and it cannot be
   // seen on a chip that never lies.
-  if (stuckIrqMs_ > 0 && mode_ == 1 && nowMs_ >= nextSpuriousMs_) {
+  if (stuckIrqMs_ > 0 && mode_ == kModeRx && nowMs_ >= nextSpuriousMs_) {
     raiseIrq(kIrqPreambleDetected);
     spuriousRaises_++;
     nextSpuriousMs_ = nowMs_ + stuckIrqMs_;
@@ -110,25 +110,27 @@ void VirtualSX1262::tick(uint64_t nowMs) {
   // Reaching it is a Timeout and a return to standby, exactly as a completed
   // reception would be, because a receiver that stops listening has stopped
   // listening whichever way it got there.
-  if (mode_ == 1 && rxDeadlineArmed_ && nowMs_ >= rxDeadlineMs_) {
+  if (mode_ == kModeRx && rxDeadlineArmed_ && nowMs_ >= rxDeadlineMs_) {
     rxDeadlineArmed_ = false;
-    mode_ = 0;
+    mode_ = kModeStandby;
     raiseIrq(kIrqTimeout);
   }
 
   // The transmit deadline, which the part enforces against a waveform that
   // never finished. The frame stays queued: the chip gave up on it, and whether
   // any of it reached the air is the simulator's to say, not ours.
-  if (mode_ == 2 && txDeadlineArmed_ && nowMs_ >= txDeadlineMs_) {
+  // A timeout goes to STDBY_RC whatever SetRxTxFallbackMode asked for: the
+  // fallback is where a transmission that finished goes, and this one did not.
+  if (mode_ == kModeTx && txDeadlineArmed_ && nowMs_ >= txDeadlineMs_) {
     txDeadlineArmed_ = false;
-    mode_ = 0;
+    mode_ = kModeStandby;
     raiseIrq(kIrqTimeout);
   }
 
   // Preamble and header detection, in receive mode only. A node cannot hear
   // anything while its own transmitter is keyed - that is half duplex, and the
   // engine already reports the channel as clear to a node that is transmitting.
-  if (mode_ != 1) return;
+  if (mode_ != kModeRx) return;
 
   const double symMs = symbolMs();
   if (channelBusy_) {
@@ -137,6 +139,12 @@ void VirtualSX1262::tick(uint64_t nowMs) {
       raiseIrq(kIrqPreambleDetected);
       preambleRaised_ = true;
       preambleRaises_++;
+      // StopTimerOnPreamble: a receiver that has heard something is no longer
+      // on a deadline, so a bounded receive cannot cut off the frame it is in
+      // the middle of.
+      if (stopTimerOnPreamble_) {
+        rxDeadlineArmed_ = false;
+      }
     }
     if (!headerRaised_ && sinceMs >= kHeaderSymbols * symMs) {
       raiseIrq(kIrqHeaderValid | kIrqSyncWordValid);
@@ -168,7 +176,7 @@ void VirtualSX1262::deliverFrameFrom(const uint8_t* frame, size_t len,
     syncMismatches_++;
     return;
   }
-  inbox.emplace_back(frame, frame + len);
+  deliverFrame(frame, len);
 }
 
 void VirtualSX1262::setChannelBusy(bool busy) {
@@ -198,10 +206,12 @@ void VirtualSX1262::setChannelBusy(bool busy) {
 }
 
 void VirtualSX1262::transmitFinished() {
-  if (mode_ == 2) {
+  if (mode_ == kModeTx) {
     txDeadlineArmed_ = false;
+    txContinuousWave_ = false;
+    txInfinitePreamble_ = false;
     raiseIrq(kIrqTxDone);
-    mode_ = 0;
+    applyFallback();
   }
 }
 
@@ -243,7 +253,7 @@ uint64_t VirtualSX1262::inboxGraceMs() const {
 // deafness and the grace exists to cover exactly that.
 void VirtualSX1262::settleInbox() {
   if (inbox.empty()) return;
-  if (mode_ == 1) {
+  if (mode_ == kModeRx) {
     deliverPending();
     return;
   }
@@ -259,6 +269,7 @@ void VirtualSX1262::deliverPending() {
   rxLen_ = (uint8_t)(f.size() > 255 ? 255 : f.size());
   memcpy(&buffer_[rxBase_], f.data(), rxLen_);
   inbox.pop_front();
+  statRxPackets_++;
   raiseIrq(kIrqRxDone);
   // Deliberately only RxDone. The detection flags say "a carrier is present",
   // and by the time a frame is delivered the carrier has ended - raising them
@@ -300,6 +311,13 @@ void VirtualSX1262::startRx(uint32_t timeoutRaw) {
   rxDeadlineArmed_ = timeoutRaw != 0 && timeoutRaw != kRxContinuous;
   if (rxDeadlineArmed_) {
     rxDeadlineMs_ = nowMs_ + (uint64_t)((double)timeoutRaw * kTimeoutStepMs + 0.5);
+  } else if (timeoutRaw == 0 && symbNumTimeout_ > 0) {
+    // SetLoRaSymbNumTimeout, which is the same deadline counted in symbols. It
+    // only gets a look in when SetRx did not bring one of its own: the part
+    // runs a single timer, and which of the two wins is the placeholder noted
+    // in commands.cpp.
+    rxDeadlineArmed_ = true;
+    rxDeadlineMs_ = nowMs_ + (uint64_t)((double)symbNumTimeout_ * symbolMs() + 0.5);
   }
 
   // Arming the receiver is itself a delivery point, not just a change of mode.
@@ -341,7 +359,10 @@ uint32_t VirtualSX1262::estAirtimeMs(int lenBytes) const {
   const double bwHz = bwKHz_ * 1000.0;
   const double tSym = (double)(1u << sf_) / bwHz;
   const int de = lowDataRateOptimize() ? 1 : 0;
-  const int crc = 1, header = 0, crDen = cr_;
+  // IH is 1 when the header is implicit, which is the header being absent, so
+  // it subtracts its twenty symbols. Both of these were constants standing in
+  // for fields SetPacketParams carries.
+  const int crc = crcOn_ ? 1 : 0, header = headerImplicit_ ? 1 : 0, crDen = cr_;
   double num = 8.0 * lenBytes - 4.0 * sf_ + 28 + 16 * crc - 20 * header;
   double den = 4.0 * (sf_ - 2 * de);
   double payloadSyms = 8 + fmax(ceil(num / den) * crDen, 0.0);
@@ -429,7 +450,19 @@ bool VirtualSX1262::lowDataRateOptimize() const {
   return ldroProgrammed_ ? ldro_ : (symbolMs() >= kLowDataRateSymbolMs);
 }
 
+// SetPacketParams: [preamble 15:8][preamble 7:0][headerType][payloadLen][crcOn]
+// [invertIq].
+//
+// Three of the six used to be discarded, and estAirtimeMs assumed values for
+// two of them. That is the same shape as the low data rate optimisation bug:
+// a field the firmware programs, replaced by an assumption, in the figure the
+// firmware times its own CSMA on. An implicit header is twenty symbols of
+// payload the model was charging for and the part was not, and CRC off is
+// sixteen bits it was charging for too.
 void VirtualSX1262::applyPacketParams(const uint8_t* p) {
   preambleSyms_ = ((uint32_t)p[0] << 8) | p[1];
+  headerImplicit_ = p[2] != 0;
   txLenForSend_ = p[3];
+  crcOn_ = p[4] != 0;
+  invertIq_ = p[5] != 0;
 }

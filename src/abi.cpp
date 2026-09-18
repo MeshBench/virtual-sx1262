@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 5
+#define VSX_ABI_MINOR 6
 
 struct vsx_chip {
   VirtualSX1262 chip;
@@ -157,6 +157,14 @@ void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
   }
 }
 
+void vsx_deliver_frame_failed(vsx_chip* chip, const uint8_t* frame, size_t len,
+                              uint8_t failure) {
+  if (chip && frame) {
+    chip->chip.deliverFrameFailed(frame, len, failure);
+    settle_dio1(chip);
+  }
+}
+
 void vsx_transmit_finished(vsx_chip* chip) {
   if (!chip) {
     return;
@@ -215,6 +223,23 @@ void vsx_get_state(const vsx_chip* chip, vsx_state* out) {
   out->cad_exit_mode = c.cadExitMode();
   out->sync_word = c.syncWord();
   out->low_data_rate_optimize = c.lowDataRateOptimize() ? 1 : 0;
+  out->packet_type = c.packetType();
+  out->fallback_mode = c.fallbackMode();
+  out->regulator_mode = c.regulatorMode();
+  out->dio2_as_rf_switch = c.dio2AsRfSwitch() ? 1 : 0;
+  out->dio3_as_tcxo = c.dio3AsTcxo() ? 1 : 0;
+  out->pa_duty_cycle = c.paDutyCycle();
+  out->pa_hp_max = c.paHpMax();
+  out->pa_device_sel = c.paDeviceSel();
+  out->symb_num_timeout = c.symbNumTimeout();
+  out->stop_timer_on_preamble = c.stopTimerOnPreamble() ? 1 : 0;
+  out->tx_continuous_wave = c.txContinuousWave() ? 1 : 0;
+  out->tx_infinite_preamble = c.txInfinitePreamble() ? 1 : 0;
+  out->header_implicit = c.headerImplicit() ? 1 : 0;
+  out->crc_on = c.crcOn() ? 1 : 0;
+  out->invert_iq = c.invertIq() ? 1 : 0;
+  out->rx_duty_rx_period = c.rxDutyRxPeriod();
+  out->rx_duty_sleep_period = c.rxDutySleepPeriod();
 }
 
 void vsx_get_counters(const vsx_chip* chip, vsx_counters* out) {
@@ -233,6 +258,9 @@ void vsx_get_counters(const vsx_chip* chip, vsx_counters* out) {
   out->cad_detections = c.cadDetections();
   out->sync_mismatches = c.syncMismatches();
   out->params_rejected = c.paramsRejected();
+  out->stat_rx_packets = c.statRxPackets();
+  out->stat_crc_errors = c.statCrcErrors();
+  out->stat_header_errors = c.statHeaderErrors();
 }
 
 uint32_t vsx_est_airtime_ms(const vsx_chip* chip, int len_bytes) {

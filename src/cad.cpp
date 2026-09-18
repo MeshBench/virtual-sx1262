@@ -71,5 +71,5 @@ void VirtualSX1262::finishCad() {
     cadDetections_++;
     raiseIrq(kIrqCadDetected);
   }
-  mode_ = 0;
+  mode_ = kModeStandby;
 }

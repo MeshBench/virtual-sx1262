@@ -57,6 +57,57 @@ namespace {
 [[maybe_unused]] constexpr uint16_t kIrqCadDetected = 1 << 8;
 [[maybe_unused]] constexpr uint16_t kIrqTimeout = 1 << 9;
 
+// The rest of the command set. Declared together because the reason each one
+// was missing is the same: nothing in MeshCore's path issues it, so the model
+// grew only what it was asked for. What each one now does is in commands.cpp,
+// and several of them record rather than act. That is marked there.
+[[maybe_unused]] constexpr uint8_t kSetFs = 0xC1;
+[[maybe_unused]] constexpr uint8_t kSetTxContinuousWave = 0xD1;
+[[maybe_unused]] constexpr uint8_t kSetTxInfinitePreamble = 0xD2;
+[[maybe_unused]] constexpr uint8_t kSetRegulatorMode = 0x96;
+[[maybe_unused]] constexpr uint8_t kCalibrateImage = 0x98;
+[[maybe_unused]] constexpr uint8_t kSetPaConfig = 0x95;
+[[maybe_unused]] constexpr uint8_t kSetRxTxFallbackMode = 0x93;
+[[maybe_unused]] constexpr uint8_t kSetRxDutyCycle = 0x94;
+[[maybe_unused]] constexpr uint8_t kStopTimerOnPreamble = 0x9F;
+[[maybe_unused]] constexpr uint8_t kSetLoRaSymbNumTimeout = 0xA0;
+[[maybe_unused]] constexpr uint8_t kSetDio2AsRfSwitchCtrl = 0x9D;
+[[maybe_unused]] constexpr uint8_t kSetDio3AsTcxoCtrl = 0x97;
+[[maybe_unused]] constexpr uint8_t kGetStats = 0x10;
+[[maybe_unused]] constexpr uint8_t kResetStats = 0x00;
+
+// Packet types, from SetPacketType. Only LoRa has a data path in this model.
+[[maybe_unused]] constexpr uint8_t kPacketTypeGfsk = 0x00;
+[[maybe_unused]] constexpr uint8_t kPacketTypeLora = 0x01;
+[[maybe_unused]] constexpr uint8_t kPacketTypeLrFhss = 0x03;
+
+// Where the part goes when a transmission or reception ends, from
+// SetRxTxFallbackMode.
+[[maybe_unused]] constexpr uint8_t kFallbackFs = 0x40;
+[[maybe_unused]] constexpr uint8_t kFallbackStandbyXosc = 0x30;
+[[maybe_unused]] constexpr uint8_t kFallbackStandbyRc = 0x20;
+
+// The chip modes this model distinguishes, which are fewer than the part has.
+// See the note on kModeFs in VirtualSX1262.h.
+[[maybe_unused]] constexpr uint8_t kModeStandby = 0;
+[[maybe_unused]] constexpr uint8_t kModeRx = 1;
+[[maybe_unused]] constexpr uint8_t kModeTx = 2;
+[[maybe_unused]] constexpr uint8_t kModeCad = 3;
+
+// GetStatus packs the chip mode into bits 6:4 and the command status into 3:1.
+[[maybe_unused]] constexpr uint8_t kStatusModeStandbyRc = 0x2;
+[[maybe_unused]] constexpr uint8_t kStatusModeStandbyXosc = 0x3;
+[[maybe_unused]] constexpr uint8_t kStatusModeFs = 0x4;
+[[maybe_unused]] constexpr uint8_t kStatusModeRx = 0x5;
+[[maybe_unused]] constexpr uint8_t kStatusModeTx = 0x6;
+[[maybe_unused]] constexpr uint8_t kStatusCmdDataAvailable = 0x2;
+[[maybe_unused]] constexpr uint8_t kStatusCmdCompleted = 0x6;
+
+// How a reception failed, for the deliberately corrupt delivery path.
+[[maybe_unused]] constexpr uint8_t kReceiveOk = 0;
+[[maybe_unused]] constexpr uint8_t kReceiveCrcError = 1;
+[[maybe_unused]] constexpr uint8_t kReceiveHeaderError = 2;
+
 // The LoRa sync word, which lives in two registers rather than a command.
 //
 // RadioLib writes it as a pair through WriteRegister, so nothing in the opcode

@@ -39,6 +39,7 @@ static bool returnsData(uint8_t op) {
     case kGetStatus:
     case kGetDeviceErrors:
     case kGetPacketType:
+    case kGetStats:
       return true;
     default:
       return false;
@@ -75,7 +76,7 @@ uint8_t VirtualSX1262::transferByte(uint8_t out) {
   }
   // Everything else answers with the status byte in position 1 and nothing
   // else, exactly as the buffer path does.
-  return i == 1 ? 0x22 : 0x00;
+  return i == 1 ? statusByte() : 0x00;
 }
 
 void VirtualSX1262::endTransaction() {
@@ -106,7 +107,7 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
   auto status = [&](uint8_t v) {
     if (len > 1) in[1] = v;
   };
-  status(0x22);  // standby, command completed
+  status(statusByte());
 
   switch (op) {
     case kSetStandby:
@@ -308,15 +309,23 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
 
     case kGetStatus:
+      // The status byte is the reply, and status() above has already put it in
+      // in[1]; a bare GetStatus is the one command whose whole answer it is.
       break;
     case kGetPacketType:
-      if (len >= 3) in[2] = 0x01;
-      break;  // LoRa
+      if (len >= 3) in[2] = packetType_;
+      break;
     case kGetDeviceErrors:
+      if (len >= 4) in[2] = (uint8_t)(deviceErrors_ >> 8);
+      if (len >= 5) in[3] = (uint8_t)(deviceErrors_ & 0xFF);
       break;
     case kClearDeviceErrors:
       break;
     default:
-      break;  // acknowledged and ignored
+      // Everything the driver this model grew around never sends. A command
+      // that is still nobody's lands here and is acknowledged, which is what
+      // silicon does with an opcode it does not implement.
+      runExtraCommand(op, out, len, in);
+      break;
   }
 }
