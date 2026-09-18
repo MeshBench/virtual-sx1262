@@ -179,6 +179,28 @@ class VirtualSX1262 {
   uint32_t preambleRaises() const { return preambleRaises_; }
   uint32_t spuriousRaises() const { return spuriousRaises_; }
 
+  // Events the chip had and the firmware never saw, because IrqMask had them
+  // masked off.
+  //
+  // A masked event is silence, and silence is the one symptom that looks the
+  // same as nothing having happened. A firmware that forgets to enable the
+  // interrupt it waits on is indistinguishable from a mesh with nothing on it,
+  // which is the kind of fault that gets diagnosed as the air being quiet. This
+  // counter is the difference between those two, and it is the reason enforcing
+  // the mask is safe to do at all.
+  uint32_t irqSuppressed() const { return irqSuppressed_; }
+
+  // Channel activity detection, as the firmware asked for it and as it turned
+  // out. Counted because CAD is a decision the firmware pays for in dwell time,
+  // and a host comparing a run with it against a run without it needs to know
+  // the scans actually happened.
+  uint32_t cadRuns() const { return cadRuns_; }
+  uint32_t cadDetections() const { return cadDetections_; }
+  uint8_t cadSymbolNum() const { return cadSymbolNum_; }
+  uint8_t cadDetPeak() const { return cadDetPeak_; }
+  uint8_t cadDetMin() const { return cadDetMin_; }
+  uint8_t cadExitMode() const { return cadExitMode_; }
+
   // Latch a flag once raised, as a misbehaving chip does.
   //
   // This is the fault MeshCore 1.17 exists to survive: a preamble or header
@@ -215,9 +237,24 @@ class VirtualSX1262 {
   void runCommand(const uint8_t* out, size_t len, uint8_t* in);
   void applyModulation(const uint8_t* p);
   void applyPacketParams(const uint8_t* p);
-  void startRx();
+  void applyCadParams(const uint8_t* p);
+  void startRx(uint32_t timeoutRaw);
   void startTx();
   void startCad();
+  void tickCad();
+  void finishCad();
+  double symbolMs() const;
+
+  // Record an event in the IRQ status register, if the firmware asked to be
+  // told about it.
+  //
+  // Every flag goes through here rather than touching irq_ directly, because
+  // IrqMask is not advisory: SetDioIrqParams says what reaches the status
+  // register, and a chip that records an event the firmware masked off is
+  // answering a question nobody asked. Modelled because the alternative hides a
+  // real firmware fault - a driver that waits on an interrupt it never enabled
+  // waits for ever on silicon and works perfectly here.
+  void raiseIrq(uint16_t bits);
   uint64_t inboxGraceMs() const;
   void settleInbox();
   void deliverPending();
@@ -288,11 +325,35 @@ class VirtualSX1262 {
   uint8_t noiseBits(int bits) const { return (uint8_t)(noiseNow_ & ((1u << bits) - 1)); }
   uint64_t nowMs_ = 0;
 
+  // Receive timeout, from SetRx.
+  //
+  // Zero is not a short timeout, it is single-shot receive with no deadline at
+  // all, and all ones is continuous. Only the values between the two are a
+  // deadline, which is why this is a flag and an instant rather than a duration.
+  bool rxDeadlineArmed_ = false;
+  uint64_t rxDeadlineMs_ = 0;
+
+  // Channel activity detection, as SetCadParams programmed it.
+  //
+  // The defaults are the reset values: one symbol, CAD_ONLY, and thresholds of
+  // zero. A firmware that runs CAD without programming it first gets the
+  // shortest scan the part offers, which is what the silicon does and is not a
+  // kindness worth inventing.
+  uint8_t cadSymbolNum_ = 0;
+  uint8_t cadDetPeak_ = 0;
+  uint8_t cadDetMin_ = 0;
+  uint8_t cadExitMode_ = 0;
+  uint64_t cadEndMs_ = 0;
+  bool cadSawCarrier_ = false;
+
   // Instrumentation.
   uint32_t irqReads_ = 0;
   uint32_t busyReads_ = 0;
   uint32_t busyMs_ = 0;
   uint32_t preambleRaises_ = 0;
+  uint32_t irqSuppressed_ = 0;
+  uint32_t cadRuns_ = 0;
+  uint32_t cadDetections_ = 0;
   uint64_t lastBusyTickMs_ = 0;
 
   // Fault injection: how long a raised flag refuses to clear. 0 is a chip that

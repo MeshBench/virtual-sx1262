@@ -44,6 +44,23 @@ VirtualSX1262::VirtualSX1262() {
 #endif
 }
 
+void VirtualSX1262::raiseIrq(uint16_t bits) {
+  const uint16_t allowed = (uint16_t)(bits & irqMask_);
+  if (allowed != bits) {
+    irqSuppressed_++;
+  }
+  irq_ |= allowed;
+}
+
+// One symbol, in milliseconds, at whatever the firmware has programmed.
+//
+// Shared rather than recomputed because three things now time themselves in
+// symbols - preamble detection, header detection and a CAD scan - and a second
+// copy of this is a second place for the bandwidth to be forgotten.
+double VirtualSX1262::symbolMs() const {
+  return (double)(1u << sf_) / (bwKHz_ > 0 ? bwKHz_ : 250.0);
+}
+
 void VirtualSX1262::tick(uint64_t nowMs) {
   // Time with the busy flags up, which is what the firmware is reacting to.
   if ((irq_ & (kIrqPreambleDetected | kIrqHeaderValid)) && nowMs > lastBusyTickMs_) {
@@ -71,27 +88,42 @@ void VirtualSX1262::tick(uint64_t nowMs) {
   // That is the difference between MeshCore 1.16 and 1.17, and it cannot be
   // seen on a chip that never lies.
   if (stuckIrqMs_ > 0 && mode_ == 1 && nowMs_ >= nextSpuriousMs_) {
-    irq_ |= kIrqPreambleDetected;
+    raiseIrq(kIrqPreambleDetected);
     spuriousRaises_++;
     nextSpuriousMs_ = nowMs_ + stuckIrqMs_;
   }
   settleInbox();
+
+  // A scan in progress is the chip's own business and runs before the receive
+  // path below bows out, because CAD is not receive mode and would otherwise
+  // never be looked at again once it started.
+  tickCad();
+
+  // The receive deadline, which exists only for a firmware that asked for one.
+  // Reaching it is a Timeout and a return to standby, exactly as a completed
+  // reception would be, because a receiver that stops listening has stopped
+  // listening whichever way it got there.
+  if (mode_ == 1 && rxDeadlineArmed_ && nowMs_ >= rxDeadlineMs_) {
+    rxDeadlineArmed_ = false;
+    mode_ = 0;
+    raiseIrq(kIrqTimeout);
+  }
 
   // Preamble and header detection, in receive mode only. A node cannot hear
   // anything while its own transmitter is keyed - that is half duplex, and the
   // engine already reports the channel as clear to a node that is transmitting.
   if (mode_ != 1) return;
 
-  const double symbolMs = (double)(1u << sf_) / (bwKHz_ > 0 ? bwKHz_ : 250.0);
+  const double symMs = symbolMs();
   if (channelBusy_) {
     const double sinceMs = (double)(nowMs_ - busySinceMs_);
-    if (!preambleRaised_ && sinceMs >= kPreambleSymbols * symbolMs) {
-      irq_ |= kIrqPreambleDetected;
+    if (!preambleRaised_ && sinceMs >= kPreambleSymbols * symMs) {
+      raiseIrq(kIrqPreambleDetected);
       preambleRaised_ = true;
       preambleRaises_++;
     }
-    if (!headerRaised_ && sinceMs >= kHeaderSymbols * symbolMs) {
-      irq_ |= kIrqHeaderValid | kIrqSyncWordValid;
+    if (!headerRaised_ && sinceMs >= kHeaderSymbols * symMs) {
+      raiseIrq(kIrqHeaderValid | kIrqSyncWordValid);
       headerRaised_ = true;
     }
   }
@@ -125,7 +157,7 @@ void VirtualSX1262::setChannelBusy(bool busy) {
 
 void VirtualSX1262::transmitFinished() {
   if (mode_ == 2) {
-    irq_ |= kIrqTxDone;
+    raiseIrq(kIrqTxDone);
     mode_ = 0;
   }
 }
@@ -184,7 +216,7 @@ void VirtualSX1262::deliverPending() {
   rxLen_ = (uint8_t)(f.size() > 255 ? 255 : f.size());
   memcpy(&buffer_[rxBase_], f.data(), rxLen_);
   inbox.pop_front();
-  irq_ |= kIrqRxDone;
+  raiseIrq(kIrqRxDone);
   // Deliberately only RxDone. The detection flags say "a carrier is present",
   // and by the time a frame is delivered the carrier has ended - raising them
   // here asserted the presence of a signal at the moment it stopped, which is
@@ -213,8 +245,20 @@ void VirtualSX1262::refreshNoise() {
   noiseNow_ = (uint32_t)z;
 }
 
-void VirtualSX1262::startRx() {
+void VirtualSX1262::startRx(uint32_t timeoutRaw) {
   mode_ = 1;
+
+  // SetRx carries a 24-bit timeout, and two of its values are not durations.
+  // All ones is continuous receive and zero is single-shot with no deadline, so
+  // only what lies between them arms anything. A driver asking for continuous
+  // and a driver asking for the longest finite timeout write different things
+  // and mean different things, and collapsing the two is how a receiver that
+  // should never stop acquires a deadline.
+  rxDeadlineArmed_ = timeoutRaw != 0 && timeoutRaw != kRxContinuous;
+  if (rxDeadlineArmed_) {
+    rxDeadlineMs_ = nowMs_ + (uint64_t)((double)timeoutRaw * kTimeoutStepMs + 0.5);
+  }
+
   // Arming the receiver is itself a delivery point, not just a change of mode.
   //
   // Delivery used to happen only on a tick, which quietly made every reception
@@ -236,14 +280,6 @@ void VirtualSX1262::startTx() {
   hasTransmitted_ = true;
   pendingTx.assign(&buffer_[txBase_], &buffer_[txBase_] + txLenForSend_);
   hasPendingTx = true;
-}
-
-void VirtualSX1262::startCad() {
-  mode_ = 3;
-  // CAD answers in one go: the chip listens for a couple of symbols and reports.
-  irq_ |= kIrqCadDone;
-  if (channelBusy_) irq_ |= kIrqCadDetected;
-  mode_ = 0;
 }
 
 uint32_t VirtualSX1262::estAirtimeMs(int lenBytes) const {

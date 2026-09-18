@@ -116,7 +116,11 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       mode_ = 0;
       break;
     case kSetRx:
-      startRx();
+      // The timeout is the three bytes after the opcode. A command that arrives
+      // without them is a firmware asking for single-shot receive, which is what
+      // all-zero means, so a short command and an explicit zero agree.
+      startRx(len >= 4 ? (((uint32_t)out[1] << 16) | ((uint32_t)out[2] << 8) | out[3])
+                       : 0);
       break;
     case kSetTx:
       startTx();
@@ -166,6 +170,13 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
     case kSetPacketParams:
       if (len >= 7) applyPacketParams(&out[1]);
+      break;
+
+    // The scan's parameters, which decide what a later SetCad costs and where
+    // it leaves the chip. Ignored until now, so every scan ran with whatever
+    // the reset defaults were however the firmware had configured it.
+    case kSetCadParams:
+      if (len >= 8) applyCadParams(&out[1]);
       break;
     case kSetBufferBase:
       if (len >= 3) {

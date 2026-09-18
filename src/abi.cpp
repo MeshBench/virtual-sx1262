@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 3
+#define VSX_ABI_MINOR 4
 
 struct vsx_chip {
   VirtualSX1262 chip;
@@ -201,6 +201,10 @@ void vsx_get_state(const vsx_chip* chip, vsx_state* out) {
   /* Three states, because "has not transmitted" is not "transmitted with the
    * module out". */
   out->fem_at_tx = !c.hasTransmitted() ? 0 : (c.femAtTx() ? 2 : 1);
+  out->cad_symbol_num = c.cadSymbolNum();
+  out->cad_det_peak = c.cadDetPeak();
+  out->cad_det_min = c.cadDetMin();
+  out->cad_exit_mode = c.cadExitMode();
 }
 
 void vsx_get_counters(const vsx_chip* chip, vsx_counters* out) {
@@ -214,6 +218,9 @@ void vsx_get_counters(const vsx_chip* chip, vsx_counters* out) {
   out->spurious_raises = c.spuriousRaises();
   out->preamble_raises = c.preambleRaises();
   out->frames_dropped = c.framesDropped();
+  out->irq_suppressed = c.irqSuppressed();
+  out->cad_runs = c.cadRuns();
+  out->cad_detections = c.cadDetections();
 }
 
 uint32_t vsx_est_airtime_ms(const vsx_chip* chip, int len_bytes) {

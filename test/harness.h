@@ -41,6 +41,9 @@ enum {
   IRQ_PREAMBLE = 1u << 2,
   IRQ_SYNC_WORD = 1u << 3,
   IRQ_HEADER = 1u << 4,
+  IRQ_CAD_DONE = 1u << 7,
+  IRQ_CAD_DETECTED = 1u << 8,
+  IRQ_TIMEOUT = 1u << 9,
 };
 
 /* Put the chip in a state a driver would recognise: LoRa at SF8/62.5 kHz, every

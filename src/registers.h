@@ -57,6 +57,28 @@ namespace {
 [[maybe_unused]] constexpr uint16_t kIrqCadDetected = 1 << 8;
 [[maybe_unused]] constexpr uint16_t kIrqTimeout = 1 << 9;
 
+// Untested.
+// // CAD exit modes, from SetCadParams. CAD_ONLY drops back to standby whatever it
+// // found; CAD_RX goes straight on into receive when it found something, which is
+// // the mode a driver uses to avoid re-arming between the scan and the packet it
+// // scanned for.
+// [[maybe_unused]] constexpr uint8_t kCadExitOnly = 0x00;
+// [[maybe_unused]] constexpr uint8_t kCadExitRx = 0x01;
+
+// The symbol counts SetCadParams selects between, as 1 << cadSymbolNum: the
+// register holds 0 to 4 and the scan lasts 1, 2, 4, 8 or 16 symbols. Anything
+// above 4 is not a longer scan, it is a value the part does not define, so it is
+// clamped rather than shifted with.
+[[maybe_unused]] constexpr uint8_t kCadSymbolNumMax = 4;
+
+// The timeout register's unit, shared by SetRx, SetTx and SetCadParams: one
+// count is 15.625 us, which is 1/64 of a millisecond.
+[[maybe_unused]] constexpr double kTimeoutStepMs = 1.0 / 64.0;
+
+// A 24-bit timeout of all ones is not a very long timeout, it is continuous
+// receive, and a driver that means "listen until I say otherwise" writes this.
+[[maybe_unused]] constexpr uint32_t kRxContinuous = 0xFFFFFF;
+
 // How far into a transmission a receiver locks onto the preamble, and how much
 // later the header is demodulated. Both are in symbols and become milliseconds
 // through the current modem settings, because that is what makes them behave

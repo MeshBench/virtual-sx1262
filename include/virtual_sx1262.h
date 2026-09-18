@@ -128,6 +128,18 @@ typedef struct {
    * than irq_mask: that one says what reaches the status register. Appended at
    * the end, per the ABI rule, so a host built against 1.0 is unaffected. */
   uint16_t dio1_mask;
+  /* What SetCadParams programmed, reported because a scan's cost and its answer
+   * both come from here and neither is visible any other way. cad_symbol_num is
+   * the register value, so the dwell is 1 << it symbols; cad_exit_mode is the
+   * programmed byte, recorded only: every scan ends in standby. The two
+   * thresholds are recorded and not applied:
+   * they threshold a correlator peak, and this model is told whether a carrier
+   * is present rather than how strong it is, so a host that does know the level
+   * is the only thing that can honestly act on them. */
+  uint8_t cad_symbol_num;
+  uint8_t cad_det_peak;
+  uint8_t cad_det_min;
+  uint8_t cad_exit_mode;
 } vsx_state;
 
 void vsx_get_state(const vsx_chip* chip, vsx_state* out);
@@ -139,6 +151,16 @@ typedef struct {
   uint32_t spurious_raises;
   uint32_t preamble_raises;
   uint32_t frames_dropped; /* handed over while deaf, past the grace */
+  /* Events the chip had and the firmware never saw, because IrqMask had them
+   * masked off. A firmware waiting on an interrupt it did not enable looks
+   * exactly like a quiet mesh, and this is the only thing that tells the two
+   * apart. */
+  uint32_t irq_suppressed;
+  /* Scans run, and scans that found a carrier. A host comparing a firmware that
+   * scans against one that does not needs to know the scans happened and what
+   * they cost, which is cad_runs multiplied by the dwell in vsx_state. */
+  uint32_t cad_runs;
+  uint32_t cad_detections;
 } vsx_counters;
 
 void vsx_get_counters(const vsx_chip* chip, vsx_counters* out);
