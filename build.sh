@@ -115,7 +115,7 @@ check_shared_imports() {
 # One binary per subject rather than one big one, because the house limit on
 # file length applies to tests too and a single file had already outgrown it.
 # They share test/harness.h and nothing else, so each counts its own failures.
-TESTS="test_reception test_interrupts test_spi test_cad"
+TESTS="test_reception test_interrupts test_spi test_cad test_modem"
 
 build_tests() {
   for t in $TESTS; do

@@ -123,7 +123,11 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
                        : 0);
       break;
     case kSetTx:
-      startTx();
+      // The same three timeout bytes SetRx carries, on the same unit. All-zero
+      // is a driver that will wait for TxDone however long it takes, which is
+      // also what a command too short to carry the field means.
+      startTx(len >= 4 ? (((uint32_t)out[1] << 16) | ((uint32_t)out[2] << 8) | out[3])
+                       : 0);
       break;
     case kSetCad:
       startCad();
@@ -166,7 +170,7 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
 
     case kSetModulationParams:
-      if (len >= 4) applyModulation(&out[1]);
+      if (len >= 4) applyModulation(&out[1], len - 1);
       break;
     case kSetPacketParams:
       if (len >= 7) applyPacketParams(&out[1]);

@@ -55,8 +55,15 @@ enum {
  * in SetDioIrqParams passed every test here for months, so the case named "only
  * what is routed to DIO1 raises DIO1" sends the real pair instead. */
 static inline void bring_up(vsx_chip* c, uint64_t* now) {
-  /* SetModulationParams: sf, bw, cr, ldro. 0x1A is the 62.5 kHz code. */
-  const uint8_t mod[] = {0x8B, 8, 0x1A, 4, 0};
+  /* SetModulationParams: sf, bw, cr, ldro. 0x03 is the 62.5 kHz code.
+   *
+   * It said 0x1A for a long time, which is not a code at all: the model kept
+   * whatever bandwidth it already had, so every case here that talks about
+   * symbols was silently timed at the 250 kHz default while the comment said
+   * 62.5. Nothing failed, because nothing asserted a number that only holds at
+   * one of the two. The model now counts a parameter it had to refuse, which is
+   * what makes the next one of these visible. */
+  const uint8_t mod[] = {0x8B, 8, 0x03, 4, 0};
   vsx_spi_transaction(c, mod, nullptr, sizeof(mod));
 
   /* SetDioIrqParams: mask, dio1, dio2, dio3 - unmask everything onto DIO1. */

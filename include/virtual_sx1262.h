@@ -93,6 +93,21 @@ void vsx_set_channel_busy(vsx_chip* chip, int busy);
  * packet cannot arrive after the signal that carried it has gone. */
 void vsx_deliver_frame(vsx_chip* chip, const uint8_t* frame, size_t len);
 
+/* The same, from a transmitter whose sync word the caller knows.
+ *
+ * A LoRa receiver uses the sync word to decide a frame was not meant for it,
+ * and a frame whose word does not match this chip's is refused and counted
+ * rather than delivered. The firmware sets its own word through two registers
+ * rather than a command, so nothing above the chip can see it except through
+ * vsx_state.sync_word.
+ *
+ * Separate from vsx_deliver_frame rather than an extra argument to it, because
+ * a host that does not model sync words must go on working unchanged: making no
+ * claim about the transmitter is not the same as claiming it matched, and the
+ * older entry point makes no claim. */
+void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
+                            uint16_t sync_word);
+
 /* The waveform the chip started has finished on the air. The chip cannot know
  * this: how long a transmission occupied the channel is a property of the
  * samples the simulator generated. */
@@ -140,6 +155,16 @@ typedef struct {
   uint8_t cad_det_peak;
   uint8_t cad_det_min;
   uint8_t cad_exit_mode;
+  /* The LoRa sync word the firmware programmed, as the two registers hold it:
+   * 0x1424 is the private network default this chip comes up on and 0x3444 is
+   * the public one. Two meshes sharing a frequency are told apart by this and
+   * by nothing else the chip can see. */
+  uint16_t sync_word;
+  /* Whether the modem is running low data rate optimisation, from the field
+   * SetModulationParams programmed. Reported because it costs two bits a symbol
+   * and so changes every airtime this chip quotes, and because a firmware that
+   * never programs it is a different case from one that programs it off. */
+  uint8_t low_data_rate_optimize;
 } vsx_state;
 
 void vsx_get_state(const vsx_chip* chip, vsx_state* out);
@@ -161,6 +186,12 @@ typedef struct {
    * they cost, which is cad_runs multiplied by the dwell in vsx_state. */
   uint32_t cad_runs;
   uint32_t cad_detections;
+  /* Frames refused because they were sent under another sync word, and
+   * modulation fields refused because the part does not define them. Both are
+   * faults that otherwise present as a quiet network: a node on the wrong sync
+   * word receives nothing and reports nothing wrong. */
+  uint32_t sync_mismatches;
+  uint32_t params_rejected;
 } vsx_counters;
 
 void vsx_get_counters(const vsx_chip* chip, vsx_counters* out);

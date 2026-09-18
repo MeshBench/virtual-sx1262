@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 4
+#define VSX_ABI_MINOR 5
 
 struct vsx_chip {
   VirtualSX1262 chip;
@@ -149,6 +149,14 @@ void vsx_deliver_frame(vsx_chip* chip, const uint8_t* frame, size_t len) {
    * on arrival would let a packet in while the chip was transmitting. */
 }
 
+void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
+                            uint16_t sync_word) {
+  if (chip && frame) {
+    chip->chip.deliverFrameFrom(frame, len, sync_word);
+    settle_dio1(chip);
+  }
+}
+
 void vsx_transmit_finished(vsx_chip* chip) {
   if (!chip) {
     return;
@@ -205,6 +213,8 @@ void vsx_get_state(const vsx_chip* chip, vsx_state* out) {
   out->cad_det_peak = c.cadDetPeak();
   out->cad_det_min = c.cadDetMin();
   out->cad_exit_mode = c.cadExitMode();
+  out->sync_word = c.syncWord();
+  out->low_data_rate_optimize = c.lowDataRateOptimize() ? 1 : 0;
 }
 
 void vsx_get_counters(const vsx_chip* chip, vsx_counters* out) {
@@ -221,6 +231,8 @@ void vsx_get_counters(const vsx_chip* chip, vsx_counters* out) {
   out->irq_suppressed = c.irqSuppressed();
   out->cad_runs = c.cadRuns();
   out->cad_detections = c.cadDetections();
+  out->sync_mismatches = c.syncMismatches();
+  out->params_rejected = c.paramsRejected();
 }
 
 uint32_t vsx_est_airtime_ms(const vsx_chip* chip, int len_bytes) {

@@ -235,5 +235,63 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("a transmit timeout expires into Timeout and standby");
+  /* SetTx carries the same three bytes SetRx does, and they were discarded the
+   * same way. Unlike receive there is no continuous case: a transmission ends,
+   * so a deadline reached means the waveform never finished. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    /* 6400 counts of 15.625 us is 100 ms. */
+    const uint8_t tx[] = {0x83, 0x00, 0x19, 0x00};
+    vsx_spi_transaction(c, tx, nullptr, sizeof(tx));
+    check(mode_of(c) == 2, "the chip is transmitting");
+
+    vsx_tick(c, now + 99);
+    check((irq_flags(c) & IRQ_TIMEOUT) == 0, "before the deadline, nothing");
+    vsx_tick(c, now + 100);
+    check((irq_flags(c) & IRQ_TIMEOUT) != 0, "at it, Timeout");
+    check(mode_of(c) == 0, "and the transmitter has stopped");
+    check((irq_flags(c) & IRQ_TX_DONE) == 0, "a transmission that timed out is not done");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a transmission that finishes in time does not also time out");
+  /* The deadline has to be disarmed by the thing it was waiting for, or a chip
+   * that transmitted perfectly reports a fault a hundred milliseconds later. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t tx[] = {0x83, 0x00, 0x19, 0x00};
+    vsx_spi_transaction(c, tx, nullptr, sizeof(tx));
+
+    vsx_tick(c, now + 10);
+    vsx_transmit_finished(c);
+    check((irq_flags(c) & IRQ_TX_DONE) != 0, "TxDone arrives");
+
+    vsx_tick(c, now + 500);
+    check((irq_flags(c) & IRQ_TIMEOUT) == 0, "and the deadline it beat never fires");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a transmit timeout of zero is a driver that will wait");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t tx[] = {0x83, 0x00, 0x00, 0x00};
+    vsx_spi_transaction(c, tx, nullptr, sizeof(tx));
+
+    vsx_tick(c, now + 5000);
+    check(mode_of(c) == 2, "still transmitting five seconds later");
+    check((irq_flags(c) & IRQ_TIMEOUT) == 0, "with no deadline to reach");
+    vsx_destroy(c);
+  }
+
   return report("");
 }

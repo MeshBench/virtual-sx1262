@@ -57,6 +57,31 @@ namespace {
 [[maybe_unused]] constexpr uint16_t kIrqCadDetected = 1 << 8;
 [[maybe_unused]] constexpr uint16_t kIrqTimeout = 1 << 9;
 
+// The LoRa sync word, which lives in two registers rather than a command.
+//
+// RadioLib writes it as a pair through WriteRegister, so nothing in the opcode
+// table names it and a model that only watches commands never sees it change.
+// The reset value is the private network word, 0x1424, which is what the part
+// comes up holding and what a firmware that never sets one is using.
+[[maybe_unused]] constexpr uint16_t kRegSyncWordMsb = 0x0740;
+[[maybe_unused]] constexpr uint16_t kRegSyncWordLsb = 0x0741;
+[[maybe_unused]] constexpr uint16_t kSyncWordPrivate = 0x1424;
+[[maybe_unused]] constexpr uint16_t kSyncWordPublic = 0x3444;
+
+// What SetModulationParams is allowed to say. Outside these the firmware has
+// programmed something the part does not define, which is a fault to report
+// rather than a value to adopt.
+[[maybe_unused]] constexpr uint8_t kSfMin = 5;
+[[maybe_unused]] constexpr uint8_t kSfMax = 12;
+[[maybe_unused]] constexpr uint8_t kCrMin = 1;
+[[maybe_unused]] constexpr uint8_t kCrMax = 4;
+
+// The symbol duration past which the part wants low data rate optimisation, in
+// milliseconds. It is a property of the symbol and not of the spreading factor:
+// SF11 crosses it at 125 kHz and does not at 250 kHz, so a rule written in SF
+// alone is wrong at every bandwidth but one.
+[[maybe_unused]] constexpr double kLowDataRateSymbolMs = 16.0;
+
 // Untested.
 // // CAD exit modes, from SetCadParams. CAD_ONLY drops back to standby whatever it
 // // found; CAD_RX goes straight on into receive when it found something, which is

@@ -196,6 +196,33 @@ class VirtualSX1262 {
   // the scans actually happened.
   uint32_t cadRuns() const { return cadRuns_; }
   uint32_t cadDetections() const { return cadDetections_; }
+
+  // Frames refused because they were sent under a different sync word, and
+  // modulation fields refused because the part does not define them.
+  //
+  // Both are silent otherwise, and both are firmware faults that look like a
+  // quiet network: a node on the wrong sync word receives nothing and reports
+  // nothing wrong, and a bandwidth code that is not a code leaves the modem on
+  // whatever it was set to last.
+  uint32_t syncMismatches() const { return syncMismatches_; }
+  uint32_t paramsRejected() const { return paramsRejected_; }
+
+  // The LoRa sync word, from the two registers the firmware writes it into.
+  //
+  // Read out of the register array rather than shadowed, because the firmware
+  // sets it with WriteRegister and a shadow copy is a second thing to keep in
+  // step with the array that is already the answer. Defined next door, where
+  // the datasheet's addresses live.
+  uint16_t syncWord() const;
+
+  // Hand over a frame whose transmitter's sync word is known, so the chip can
+  // refuse one that was not meant for this network.
+  void deliverFrameFrom(const uint8_t* frame, size_t len, uint16_t syncWordSent);
+
+  // Whether the modem is spending two bits a symbol on low data rate
+  // optimisation, from what the firmware programmed rather than from the
+  // spreading factor alone.
+  bool lowDataRateOptimize() const;
   uint8_t cadSymbolNum() const { return cadSymbolNum_; }
   uint8_t cadDetPeak() const { return cadDetPeak_; }
   uint8_t cadDetMin() const { return cadDetMin_; }
@@ -235,11 +262,12 @@ class VirtualSX1262 {
 
  private:
   void runCommand(const uint8_t* out, size_t len, uint8_t* in);
-  void applyModulation(const uint8_t* p);
+  static float bandwidthForCode(uint8_t code);
+  void applyModulation(const uint8_t* p, size_t n);
   void applyPacketParams(const uint8_t* p);
   void applyCadParams(const uint8_t* p);
   void startRx(uint32_t timeoutRaw);
-  void startTx();
+  void startTx(uint32_t timeoutRaw);
   void startCad();
   void tickCad();
   void finishCad();
@@ -333,6 +361,21 @@ class VirtualSX1262 {
   bool rxDeadlineArmed_ = false;
   uint64_t rxDeadlineMs_ = 0;
 
+  // Transmit timeout, from SetTx, on the same 15.625 us unit.
+  //
+  // Zero disables it and is what a driver waiting for TxDone sends. Anything
+  // else is a deadline the part enforces against its own transmission, so
+  // reaching it means the waveform never finished: Timeout, and back to
+  // standby. There is no continuous case here, because a transmission ends.
+  bool txDeadlineArmed_ = false;
+  uint64_t txDeadlineMs_ = 0;
+
+  // Low data rate optimisation as the firmware programmed it, and whether it
+  // ever did. Two fields rather than one, because "not programmed" is a real
+  // state with its own answer and is not the same as "programmed off".
+  bool ldro_ = false;
+  bool ldroProgrammed_ = false;
+
   // Channel activity detection, as SetCadParams programmed it.
   //
   // The defaults are the reset values: one symbol, CAD_ONLY, and thresholds of
@@ -354,6 +397,8 @@ class VirtualSX1262 {
   uint32_t irqSuppressed_ = 0;
   uint32_t cadRuns_ = 0;
   uint32_t cadDetections_ = 0;
+  uint32_t syncMismatches_ = 0;
+  uint32_t paramsRejected_ = 0;
   uint64_t lastBusyTickMs_ = 0;
 
   // Fault injection: how long a raised flag refuses to clear. 0 is a chip that
