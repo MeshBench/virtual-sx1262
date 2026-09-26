@@ -39,6 +39,7 @@ static bool returnsData(uint8_t op) {
     case kGetStatus:
     case kGetDeviceErrors:
     case kGetPacketType:
+    case kGetStats:
       return true;
     default:
       return false;
@@ -75,7 +76,7 @@ uint8_t VirtualSX1262::transferByte(uint8_t out) {
   }
   // Everything else answers with the status byte in position 1 and nothing
   // else, exactly as the buffer path does.
-  return i == 1 ? 0x22 : 0x00;
+  return i == 1 ? statusByte() : 0x00;
 }
 
 void VirtualSX1262::endTransaction() {
@@ -106,7 +107,7 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
   auto status = [&](uint8_t v) {
     if (len > 1) in[1] = v;
   };
-  status(0x22);  // standby, command completed
+  status(statusByte());
 
   switch (op) {
     case kSetStandby:
@@ -116,10 +117,18 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       mode_ = 0;
       break;
     case kSetRx:
-      startRx();
+      // The timeout is the three bytes after the opcode. A command that arrives
+      // without them is a firmware asking for single-shot receive, which is what
+      // all-zero means, so a short command and an explicit zero agree.
+      startRx(len >= 4 ? (((uint32_t)out[1] << 16) | ((uint32_t)out[2] << 8) | out[3])
+                       : 0);
       break;
     case kSetTx:
-      startTx();
+      // The same three timeout bytes SetRx carries, on the same unit. All-zero
+      // is a driver that will wait for TxDone however long it takes, which is
+      // also what a command too short to carry the field means.
+      startTx(len >= 4 ? (((uint32_t)out[1] << 16) | ((uint32_t)out[2] << 8) | out[3])
+                       : 0);
       break;
     case kSetCad:
       startCad();
@@ -162,10 +171,17 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
 
     case kSetModulationParams:
-      if (len >= 4) applyModulation(&out[1]);
+      if (len >= 4) applyModulation(&out[1], len - 1);
       break;
     case kSetPacketParams:
       if (len >= 7) applyPacketParams(&out[1]);
+      break;
+
+    // The scan's parameters, which decide what a later SetCad costs and where
+    // it leaves the chip. Ignored until now, so every scan ran with whatever
+    // the reset defaults were however the firmware had configured it.
+    case kSetCadParams:
+      if (len >= 8) applyCadParams(&out[1]);
       break;
     case kSetBufferBase:
       if (len >= 3) {
@@ -293,15 +309,23 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
 
     case kGetStatus:
+      // The status byte is the reply, and status() above has already put it in
+      // in[1]; a bare GetStatus is the one command whose whole answer it is.
       break;
     case kGetPacketType:
-      if (len >= 3) in[2] = 0x01;
-      break;  // LoRa
+      if (len >= 3) in[2] = packetType_;
+      break;
     case kGetDeviceErrors:
+      if (len >= 4) in[2] = (uint8_t)(deviceErrors_ >> 8);
+      if (len >= 5) in[3] = (uint8_t)(deviceErrors_ & 0xFF);
       break;
     case kClearDeviceErrors:
       break;
     default:
-      break;  // acknowledged and ignored
+      // Everything the driver this model grew around never sends. A command
+      // that is still nobody's lands here and is acknowledged, which is what
+      // silicon does with an opcode it does not implement.
+      runExtraCommand(op, out, len, in);
+      break;
   }
 }

@@ -93,6 +93,35 @@ void vsx_set_channel_busy(vsx_chip* chip, int busy);
  * packet cannot arrive after the signal that carried it has gone. */
 void vsx_deliver_frame(vsx_chip* chip, const uint8_t* frame, size_t len);
 
+/* The same, from a transmitter whose sync word the caller knows.
+ *
+ * A LoRa receiver uses the sync word to decide a frame was not meant for it,
+ * and a frame whose word does not match this chip's is refused and counted
+ * rather than delivered. The firmware sets its own word through two registers
+ * rather than a command, so nothing above the chip can see it except through
+ * vsx_state.sync_word.
+ *
+ * Separate from vsx_deliver_frame rather than an extra argument to it, because
+ * a host that does not model sync words must go on working unchanged: making no
+ * claim about the transmitter is not the same as claiming it matched, and the
+ * older entry point makes no claim. */
+void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
+                            uint16_t sync_word);
+
+/* A frame the receiver got and could not trust. `failure` is 1 for a CRC error
+ * and 2 for a header error.
+ *
+ * PLACEHOLDER INTERFACE, and the only way CrcErr or HeaderErr can be raised at
+ * all. The chip cannot decide this: whether a frame's CRC checks depends on
+ * what arrived at the antenna, which the simulator owns. Nothing calls this
+ * yet, so both flags stay unreachable in practice and the firmware's error
+ * paths stay unexercised: under calculated RF a frame arrives whole or not at
+ * all and nothing ever will, and under waveform RF the demodulator genuinely
+ * can fail a CRC but nothing is wired to say so. A CRC failure delivers the
+ * corrupt payload and raises RxDone beside CrcErr, as the part does. */
+void vsx_deliver_frame_failed(vsx_chip* chip, const uint8_t* frame, size_t len,
+                              uint8_t failure);
+
 /* The waveform the chip started has finished on the air. The chip cannot know
  * this: how long a transmission occupied the channel is a property of the
  * samples the simulator generated. */
@@ -128,6 +157,49 @@ typedef struct {
    * than irq_mask: that one says what reaches the status register. Appended at
    * the end, per the ABI rule, so a host built against 1.0 is unaffected. */
   uint16_t dio1_mask;
+  /* What SetCadParams programmed, reported because a scan's cost and its answer
+   * both come from here and neither is visible any other way. cad_symbol_num is
+   * the register value, so the dwell is 1 << it symbols; cad_exit_mode is the
+   * programmed byte, recorded only: every scan ends in standby. The two
+   * thresholds are recorded and not applied:
+   * they threshold a correlator peak, and this model is told whether a carrier
+   * is present rather than how strong it is, so a host that does know the level
+   * is the only thing that can honestly act on them. */
+  uint8_t cad_symbol_num;
+  uint8_t cad_det_peak;
+  uint8_t cad_det_min;
+  uint8_t cad_exit_mode;
+  /* The LoRa sync word the firmware programmed, as the two registers hold it:
+   * 0x1424 is the private network default this chip comes up on and 0x3444 is
+   * the public one. Two meshes sharing a frequency are told apart by this and
+   * by nothing else the chip can see. */
+  uint16_t sync_word;
+  /* Whether the modem is running low data rate optimisation, from the field
+   * SetModulationParams programmed. Reported because it costs two bits a symbol
+   * and so changes every airtime this chip quotes, and because a firmware that
+   * never programs it is a different case from one that programs it off. */
+  uint8_t low_data_rate_optimize;
+  /* The rest of the command set, as the firmware programmed it. Most of these
+   * are recorded rather than acted on; src/commands.cpp says which is which for
+   * each one, and a host reading a value here is reading what was asked for,
+   * not a claim that the model obeyed it. */
+  uint8_t packet_type;       /* 0 GFSK, 1 LoRa, 3 LR-FHSS; only LoRa runs */
+  uint8_t fallback_mode;     /* 0x20 STDBY_RC, 0x30 STDBY_XOSC, 0x40 FS */
+  uint8_t regulator_mode;    /* recorded only; this model has no current */
+  uint8_t dio2_as_rf_switch; /* recorded; the FEM line is host-driven here */
+  uint8_t dio3_as_tcxo;      /* recorded only */
+  uint8_t pa_duty_cycle;     /* recorded; with pa_hp_max this is half of */
+  uint8_t pa_hp_max;         /* what sets output power on silicon, and the */
+  uint8_t pa_device_sel;     /* board owns the other half */
+  uint8_t symb_num_timeout;  /* a receive deadline counted in symbols */
+  uint8_t stop_timer_on_preamble;
+  uint8_t tx_continuous_wave; /* a bare carrier; the host must put it on air */
+  uint8_t tx_infinite_preamble;
+  uint8_t header_implicit; /* the three SetPacketParams fields that were */
+  uint8_t crc_on;          /* discarded, all of which change airtime */
+  uint8_t invert_iq;
+  uint32_t rx_duty_rx_period; /* recorded; the receiver does not sleep */
+  uint32_t rx_duty_sleep_period;
 } vsx_state;
 
 void vsx_get_state(const vsx_chip* chip, vsx_state* out);
@@ -139,6 +211,28 @@ typedef struct {
   uint32_t spurious_raises;
   uint32_t preamble_raises;
   uint32_t frames_dropped; /* handed over while deaf, past the grace */
+  /* Events the chip had and the firmware never saw, because IrqMask had them
+   * masked off. A firmware waiting on an interrupt it did not enable looks
+   * exactly like a quiet mesh, and this is the only thing that tells the two
+   * apart. */
+  uint32_t irq_suppressed;
+  /* Scans run, and scans that found a carrier. A host comparing a firmware that
+   * scans against one that does not needs to know the scans happened and what
+   * they cost, which is cad_runs multiplied by the dwell in vsx_state. */
+  uint32_t cad_runs;
+  uint32_t cad_detections;
+  /* Frames refused because they were sent under another sync word, and
+   * modulation fields refused because the part does not define them. Both are
+   * faults that otherwise present as a quiet network: a node on the wrong sync
+   * word receives nothing and reports nothing wrong. */
+  uint32_t sync_mismatches;
+  uint32_t params_rejected;
+  /* GetStats' three counters, as the firmware reads them. rx_packets is real;
+   * the other two can only move through vsx_deliver_frame_failed, which nothing
+   * calls, so a firmware polling them sees zero however bad the channel is. */
+  uint16_t stat_rx_packets;
+  uint16_t stat_crc_errors;
+  uint16_t stat_header_errors;
 } vsx_counters;
 
 void vsx_get_counters(const vsx_chip* chip, vsx_counters* out);
