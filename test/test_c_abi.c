@@ -166,6 +166,23 @@ int main(void) {
   vsx_transmit_finished(chip);
   check(1, "vsx_transmit_finished");
 
+  /* The sync word, and a frame from a network this chip is not on. Checked
+   * from C as well as C++ because the refusal is the whole point of the entry
+   * point, and a host that gets an uint16_t argument wrong here would deliver
+   * every frame instead of none. */
+  {
+    vsx_state s;
+    vsx_get_state(chip, &s);
+    check(s.sync_word == 0x1424, "vsx_get_state reports the sync word");
+  }
+  dio1_edges = 0;
+  vsx_deliver_frame_from(chip, frame, sizeof(frame), 0x3444);
+  {
+    vsx_counters k;
+    vsx_get_counters(chip, &k);
+    check(k.sync_mismatches == 1, "vsx_deliver_frame_from refuses another network");
+  }
+
   check(vsx_take_tx(chip, tx, sizeof(tx)) == 0, "vsx_take_tx with nothing to send");
 
   vsx_set_fem_enabled(chip, 1);
@@ -195,6 +212,8 @@ int main(void) {
   vsx_tick(NULL, 1);
   vsx_set_channel_busy(NULL, 1);
   vsx_deliver_frame(NULL, frame, sizeof(frame));
+  vsx_deliver_frame_from(NULL, frame, sizeof(frame), 0x1424);
+  vsx_deliver_frame_failed(NULL, frame, sizeof(frame), 1);
   vsx_transmit_finished(NULL);
   vsx_set_fem_enabled(NULL, 1);
   vsx_set_last_signal(NULL, 0.0f, 0.0f);

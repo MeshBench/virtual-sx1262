@@ -30,6 +30,13 @@ VirtualSX1262::VirtualSX1262() {
   // on. Power-on default is the non-boosted value.
   regs_[0x08AC] = 0x94;
 
+  // The sync word the part comes up holding. A firmware that never writes one
+  // is on the private network word, and a model that came up on zero would
+  // have every node agreeing with every other node about a value none of them
+  // chose.
+  regs_[kRegSyncWordMsb] = (uint8_t)(kSyncWordPrivate >> 8);
+  regs_[kRegSyncWordLsb] = (uint8_t)(kSyncWordPrivate & 0xFF);
+
 #ifdef VIRTUAL_SX1262_STUCK_IRQ_MS
   // A deliberately misbehaving chip, built as its own firmware variant.
   //
@@ -42,6 +49,23 @@ VirtualSX1262::VirtualSX1262() {
   // difference between the two versions can be measured rather than assumed.
   stuckIrqMs_ = VIRTUAL_SX1262_STUCK_IRQ_MS;
 #endif
+}
+
+void VirtualSX1262::raiseIrq(uint16_t bits) {
+  const uint16_t allowed = (uint16_t)(bits & irqMask_);
+  if (allowed != bits) {
+    irqSuppressed_++;
+  }
+  irq_ |= allowed;
+}
+
+// One symbol, in milliseconds, at whatever the firmware has programmed.
+//
+// Shared rather than recomputed because three things now time themselves in
+// symbols - preamble detection, header detection and a CAD scan - and a second
+// copy of this is a second place for the bandwidth to be forgotten.
+double VirtualSX1262::symbolMs() const {
+  return (double)(1u << sf_) / (bwKHz_ > 0 ? bwKHz_ : 250.0);
 }
 
 void VirtualSX1262::tick(uint64_t nowMs) {
@@ -70,31 +94,89 @@ void VirtualSX1262::tick(uint64_t nowMs) {
   // trusts it believes the channel is busy for ever and stops transmitting.
   // That is the difference between MeshCore 1.16 and 1.17, and it cannot be
   // seen on a chip that never lies.
-  if (stuckIrqMs_ > 0 && mode_ == 1 && nowMs_ >= nextSpuriousMs_) {
-    irq_ |= kIrqPreambleDetected;
+  if (stuckIrqMs_ > 0 && mode_ == kModeRx && nowMs_ >= nextSpuriousMs_) {
+    raiseIrq(kIrqPreambleDetected);
     spuriousRaises_++;
     nextSpuriousMs_ = nowMs_ + stuckIrqMs_;
   }
   settleInbox();
 
+  // A scan in progress is the chip's own business and runs before the receive
+  // path below bows out, because CAD is not receive mode and would otherwise
+  // never be looked at again once it started.
+  tickCad();
+
+  // The receive deadline, which exists only for a firmware that asked for one.
+  // Reaching it is a Timeout and a return to standby, exactly as a completed
+  // reception would be, because a receiver that stops listening has stopped
+  // listening whichever way it got there.
+  if (mode_ == kModeRx && rxDeadlineArmed_ && nowMs_ >= rxDeadlineMs_) {
+    rxDeadlineArmed_ = false;
+    mode_ = kModeStandby;
+    raiseIrq(kIrqTimeout);
+  }
+
+  // The transmit deadline, which the part enforces against a waveform that
+  // never finished. The frame stays queued: the chip gave up on it, and whether
+  // any of it reached the air is the simulator's to say, not ours.
+  // A timeout goes to STDBY_RC whatever SetRxTxFallbackMode asked for: the
+  // fallback is where a transmission that finished goes, and this one did not.
+  if (mode_ == kModeTx && txDeadlineArmed_ && nowMs_ >= txDeadlineMs_) {
+    txDeadlineArmed_ = false;
+    mode_ = kModeStandby;
+    raiseIrq(kIrqTimeout);
+  }
+
   // Preamble and header detection, in receive mode only. A node cannot hear
   // anything while its own transmitter is keyed - that is half duplex, and the
   // engine already reports the channel as clear to a node that is transmitting.
-  if (mode_ != 1) return;
+  if (mode_ != kModeRx) return;
 
-  const double symbolMs = (double)(1u << sf_) / (bwKHz_ > 0 ? bwKHz_ : 250.0);
+  const double symMs = symbolMs();
   if (channelBusy_) {
     const double sinceMs = (double)(nowMs_ - busySinceMs_);
-    if (!preambleRaised_ && sinceMs >= kPreambleSymbols * symbolMs) {
-      irq_ |= kIrqPreambleDetected;
+    if (!preambleRaised_ && sinceMs >= kPreambleSymbols * symMs) {
+      raiseIrq(kIrqPreambleDetected);
       preambleRaised_ = true;
       preambleRaises_++;
+      // StopTimerOnPreamble: a receiver that has heard something is no longer
+      // on a deadline, so a bounded receive cannot cut off the frame it is in
+      // the middle of.
+      if (stopTimerOnPreamble_) {
+        rxDeadlineArmed_ = false;
+      }
     }
-    if (!headerRaised_ && sinceMs >= kHeaderSymbols * symbolMs) {
-      irq_ |= kIrqHeaderValid | kIrqSyncWordValid;
+    if (!headerRaised_ && sinceMs >= kHeaderSymbols * symMs) {
+      raiseIrq(kIrqHeaderValid | kIrqSyncWordValid);
       headerRaised_ = true;
     }
   }
+}
+
+uint16_t VirtualSX1262::syncWord() const {
+  return (uint16_t)(((uint16_t)regs_[kRegSyncWordMsb] << 8) | regs_[kRegSyncWordLsb]);
+}
+
+// A frame arriving from a transmitter whose sync word the caller knows.
+//
+// The sync word is what a LoRa receiver uses to decide a frame is not meant for
+// it, and it was the one piece of the header this model could not act on: the
+// firmware writes it through two registers rather than a command, so it landed
+// in the register array and nothing ever read it back. Two meshes on one
+// frequency with different words therefore heard each other perfectly, which is
+// the opposite of the property the word exists to provide.
+//
+// Kept separate from deliverFrame() rather than folded into it, because a host
+// that does not model sync words at all must go on working: no claim about the
+// transmitter means no grounds to refuse, and the old entry point makes no
+// claim. A host that does know says so here.
+void VirtualSX1262::deliverFrameFrom(const uint8_t* frame, size_t len,
+                                     uint16_t syncWordSent) {
+  if (syncWordSent != syncWord()) {
+    syncMismatches_++;
+    return;
+  }
+  deliverFrame(frame, len);
 }
 
 void VirtualSX1262::setChannelBusy(bool busy) {
@@ -124,9 +206,12 @@ void VirtualSX1262::setChannelBusy(bool busy) {
 }
 
 void VirtualSX1262::transmitFinished() {
-  if (mode_ == 2) {
-    irq_ |= kIrqTxDone;
-    mode_ = 0;
+  if (mode_ == kModeTx) {
+    txDeadlineArmed_ = false;
+    txContinuousWave_ = false;
+    txInfinitePreamble_ = false;
+    raiseIrq(kIrqTxDone);
+    applyFallback();
   }
 }
 
@@ -168,7 +253,7 @@ uint64_t VirtualSX1262::inboxGraceMs() const {
 // deafness and the grace exists to cover exactly that.
 void VirtualSX1262::settleInbox() {
   if (inbox.empty()) return;
-  if (mode_ == 1) {
+  if (mode_ == kModeRx) {
     deliverPending();
     return;
   }
@@ -184,7 +269,8 @@ void VirtualSX1262::deliverPending() {
   rxLen_ = (uint8_t)(f.size() > 255 ? 255 : f.size());
   memcpy(&buffer_[rxBase_], f.data(), rxLen_);
   inbox.pop_front();
-  irq_ |= kIrqRxDone;
+  statRxPackets_++;
+  raiseIrq(kIrqRxDone);
   // Deliberately only RxDone. The detection flags say "a carrier is present",
   // and by the time a frame is delivered the carrier has ended - raising them
   // here asserted the presence of a signal at the moment it stopped, which is
@@ -213,8 +299,27 @@ void VirtualSX1262::refreshNoise() {
   noiseNow_ = (uint32_t)z;
 }
 
-void VirtualSX1262::startRx() {
+void VirtualSX1262::startRx(uint32_t timeoutRaw) {
   mode_ = 1;
+
+  // SetRx carries a 24-bit timeout, and two of its values are not durations.
+  // All ones is continuous receive and zero is single-shot with no deadline, so
+  // only what lies between them arms anything. A driver asking for continuous
+  // and a driver asking for the longest finite timeout write different things
+  // and mean different things, and collapsing the two is how a receiver that
+  // should never stop acquires a deadline.
+  rxDeadlineArmed_ = timeoutRaw != 0 && timeoutRaw != kRxContinuous;
+  if (rxDeadlineArmed_) {
+    rxDeadlineMs_ = nowMs_ + (uint64_t)((double)timeoutRaw * kTimeoutStepMs + 0.5);
+  } else if (timeoutRaw == 0 && symbNumTimeout_ > 0) {
+    // SetLoRaSymbNumTimeout, which is the same deadline counted in symbols. It
+    // only gets a look in when SetRx did not bring one of its own: the part
+    // runs a single timer, and which of the two wins is the placeholder noted
+    // in commands.cpp.
+    rxDeadlineArmed_ = true;
+    rxDeadlineMs_ = nowMs_ + (uint64_t)((double)symbNumTimeout_ * symbolMs() + 0.5);
+  }
+
   // Arming the receiver is itself a delivery point, not just a change of mode.
   //
   // Delivery used to happen only on a tick, which quietly made every reception
@@ -227,8 +332,19 @@ void VirtualSX1262::startRx() {
   settleInbox();
 }
 
-void VirtualSX1262::startTx() {
+void VirtualSX1262::startTx(uint32_t timeoutRaw) {
   mode_ = 2;
+
+  // SetTx's timeout, which unlike SetRx's has no continuous case: a
+  // transmission ends. Zero disables it and is what a driver content to wait
+  // for TxDone sends; anything else is the part promising to give up. Reaching
+  // it means the waveform never finished, which from inside the chip is
+  // indistinguishable from a host that forgot to say it had.
+  txDeadlineArmed_ = timeoutRaw != 0;
+  if (txDeadlineArmed_) {
+    txDeadlineMs_ = nowMs_ + (uint64_t)((double)timeoutRaw * kTimeoutStepMs + 0.5);
+  }
+
   // Latched here because this is the instant it decides anything. RadioLib
   // raises the RF switch into transmit before issuing SetTx, so by now the line
   // carries the answer to "does this transmission reach the antenna".
@@ -238,20 +354,15 @@ void VirtualSX1262::startTx() {
   hasPendingTx = true;
 }
 
-void VirtualSX1262::startCad() {
-  mode_ = 3;
-  // CAD answers in one go: the chip listens for a couple of symbols and reports.
-  irq_ |= kIrqCadDone;
-  if (channelBusy_) irq_ |= kIrqCadDetected;
-  mode_ = 0;
-}
-
 uint32_t VirtualSX1262::estAirtimeMs(int lenBytes) const {
   // Semtech's own airtime formula, from the parameters the firmware programmed.
   const double bwHz = bwKHz_ * 1000.0;
   const double tSym = (double)(1u << sf_) / bwHz;
-  const int de = (sf_ >= 11) ? 1 : 0;
-  const int crc = 1, header = 0, crDen = cr_;
+  const int de = lowDataRateOptimize() ? 1 : 0;
+  // IH is 1 when the header is implicit, which is the header being absent, so
+  // it subtracts its twenty symbols. Both of these were constants standing in
+  // for fields SetPacketParams carries.
+  const int crc = crcOn_ ? 1 : 0, header = headerImplicit_ ? 1 : 0, crDen = cr_;
   double num = 8.0 * lenBytes - 4.0 * sf_ + 28 + 16 * crc - 20 * header;
   double den = 4.0 * (sf_ - 2 * de);
   double payloadSyms = 8 + fmax(ceil(num / den) * crDen, 0.0);
@@ -259,49 +370,99 @@ uint32_t VirtualSX1262::estAirtimeMs(int lenBytes) const {
   return (uint32_t)(t * 1000.0 + 0.5);
 }
 
-void VirtualSX1262::applyModulation(const uint8_t* p) {
-  sf_ = p[0];
-  // Bandwidth is an index in the datasheet's table; only the values MeshCore
-  // uses are mapped, and anything else keeps the current setting rather than
-  // silently becoming zero and making airtime infinite.
-  switch (p[1]) {
+// The datasheet's LoRa bandwidth table, whole. Returns 0 for a code the part
+// does not define, which is not the same as a bandwidth of zero and must not be
+// adopted as one.
+float VirtualSX1262::bandwidthForCode(uint8_t code) {
+  switch (code) {
     case 0x00:
-      bwKHz_ = 7.81f;
-      break;
+      return 7.81f;
     case 0x08:
-      bwKHz_ = 10.42f;
-      break;
+      return 10.42f;
     case 0x01:
-      bwKHz_ = 15.63f;
-      break;
+      return 15.63f;
     case 0x09:
-      bwKHz_ = 20.83f;
-      break;
+      return 20.83f;
     case 0x02:
-      bwKHz_ = 31.25f;
-      break;
+      return 31.25f;
     case 0x0A:
-      bwKHz_ = 41.67f;
-      break;
+      return 41.67f;
     case 0x03:
-      bwKHz_ = 62.5f;
-      break;
+      return 62.5f;
     case 0x04:
-      bwKHz_ = 125.0f;
-      break;
+      return 125.0f;
     case 0x05:
-      bwKHz_ = 250.0f;
-      break;
+      return 250.0f;
     case 0x06:
-      bwKHz_ = 500.0f;
-      break;
+      return 500.0f;
     default:
-      break;
+      return 0.0f;
   }
-  cr_ = p[2] ? (4 + p[2]) : cr_;
 }
 
+// SetModulationParams: [sf][bw][cr][ldro].
+//
+// Every field is checked, and a field the part does not define is counted and
+// left alone rather than adopted. Keeping the old value is the safe half of
+// that and was already here; the counter is the half that was missing, because
+// a rejected parameter used to be indistinguishable from one that was never
+// sent. This model's own test harness had been programming bandwidth 0x1A,
+// which is not a code, and quietly running every timing assertion at the
+// default 250 kHz while its comment said 62.5.
+void VirtualSX1262::applyModulation(const uint8_t* p, size_t n) {
+  if (p[0] >= kSfMin && p[0] <= kSfMax) {
+    sf_ = p[0];
+  } else {
+    paramsRejected_++;
+  }
+
+  const float bw = bandwidthForCode(p[1]);
+  if (bw > 0.0f) {
+    bwKHz_ = bw;
+  } else {
+    paramsRejected_++;
+  }
+
+  if (p[2] >= kCrMin && p[2] <= kCrMax) {
+    cr_ = 4 + p[2];
+  } else {
+    paramsRejected_++;
+  }
+
+  // Low data rate optimisation is a field the firmware programs, not something
+  // to infer. Inferring it was wrong at every bandwidth but 125 kHz, and wrong
+  // in the figure the firmware asks this chip for to time its own CSMA: at
+  // SF11 and 250 kHz it added two bits per symbol the part would not have
+  // added, and quoted an airtime about an eighth too long.
+  if (n >= 4) {
+    ldroProgrammed_ = true;
+    ldro_ = p[3] != 0;
+  }
+}
+
+// Whether the modem is spending two bits a symbol on low data rate
+// optimisation.
+//
+// The programmed field wins, because that is the one the part obeys. Only a
+// firmware that never sent the field falls back to the symbol duration rule,
+// which is the rule the chip would have applied to itself.
+bool VirtualSX1262::lowDataRateOptimize() const {
+  return ldroProgrammed_ ? ldro_ : (symbolMs() >= kLowDataRateSymbolMs);
+}
+
+// SetPacketParams: [preamble 15:8][preamble 7:0][headerType][payloadLen][crcOn]
+// [invertIq].
+//
+// Three of the six used to be discarded, and estAirtimeMs assumed values for
+// two of them. That is the same shape as the low data rate optimisation bug:
+// a field the firmware programs, replaced by an assumption, in the figure the
+// firmware times its own CSMA on. An implicit header is twenty symbols of
+// payload the model was charging for and the part was not, and CRC off is
+// sixteen bits it was charging for too.
 void VirtualSX1262::applyPacketParams(const uint8_t* p) {
   preambleSyms_ = ((uint32_t)p[0] << 8) | p[1];
+  headerImplicit_ = p[2] != 0;
   txLenForSend_ = p[3];
+  crcOn_ = p[4] != 0;
+  invertIq_ = p[5] != 0;
 }

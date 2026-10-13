@@ -138,5 +138,160 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("an interrupt the firmware masked off is not in the status register");
+  /* IrqMask was parsed and then never used, so the register answered every
+   * event whatever the firmware had enabled. That is forgiving in the direction
+   * that hides a fault: a driver waiting on an interrupt it forgot to enable
+   * waits for ever on silicon and works perfectly here, and the difference only
+   * shows up on a board.
+   *
+   * The pair sent here is RadioLib's own for a receive that wants only RxDone:
+   * enabled in the register, routed to the pin, and nothing else in either. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    const uint8_t mod[] = {0x8B, 8, 0x1A, 4, 0};
+    vsx_spi_transaction(c, mod, nullptr, sizeof(mod));
+    const uint8_t dio[] = {0x08, 0x00, 0x02, 0x00, 0x02, 0, 0, 0, 0};
+    vsx_spi_transaction(c, dio, nullptr, sizeof(dio));
+    const uint8_t rx[] = {0x82, 0xFF, 0xFF, 0xFF};
+    vsx_spi_transaction(c, rx, nullptr, sizeof(rx));
+
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 100; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check((irq_flags(c) & (IRQ_PREAMBLE | IRQ_HEADER)) == 0,
+          "the detection flags are masked off, so the register does not carry them");
+
+    vsx_counters k;
+    vsx_get_counters(c, &k);
+    check(k.preamble_raises > 0, "the carrier was detected all the same");
+    check(k.irq_suppressed > 0, "and the chip counts what it did not report");
+
+    const uint8_t frame[] = {1, 2, 3, 4};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "the one interrupt it did enable arrives");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a masked interrupt cannot raise DIO1 either");
+  /* DIO1 selects from what the register carries. Routing a bit to the pin that
+   * the mask keeps out of the register is a driver asking for something the
+   * part cannot do, and answering it would put a level on the pin with nothing
+   * behind it to read. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    const uint8_t mod[] = {0x8B, 8, 0x1A, 4, 0};
+    vsx_spi_transaction(c, mod, nullptr, sizeof(mod));
+    /* Nothing enabled, everything routed. */
+    const uint8_t dio[] = {0x08, 0x00, 0x00, 0xFF, 0xFF, 0, 0, 0, 0};
+    vsx_spi_transaction(c, dio, nullptr, sizeof(dio));
+    const uint8_t rx[] = {0x82, 0xFF, 0xFF, 0xFF};
+    vsx_spi_transaction(c, rx, nullptr, sizeof(rx));
+
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 100; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check(vsx_dio1_asserted(c) == 0, "the pin stays low");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a receive timeout expires into Timeout and standby");
+  /* SetRx carried a timeout that was discarded, so the bit could never be set
+   * and a bounded receive never ended. Continuous receive is all ones and is
+   * the case that must keep working, because it is the one MeshCore uses. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    /* 6400 counts of 15.625 us is 100 ms. */
+    const uint8_t rx[] = {0x82, 0x00, 0x19, 0x00};
+    vsx_spi_transaction(c, rx, nullptr, sizeof(rx));
+
+    vsx_tick(c, now + 99);
+    check(mode_of(c) == 1, "before the deadline it is still listening");
+    check((irq_flags(c) & IRQ_TIMEOUT) == 0, "and has not timed out");
+
+    vsx_tick(c, now + 100);
+    check((irq_flags(c) & IRQ_TIMEOUT) != 0, "at the deadline Timeout is raised");
+    check(mode_of(c) == 0, "and the receiver has stopped");
+    vsx_destroy(c);
+
+    c = vsx_create();
+    now = 0;
+    bring_up(c, &now);
+    for (int i = 0; i < 500; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check(mode_of(c) == 1, "continuous receive has no deadline to reach");
+    check((irq_flags(c) & IRQ_TIMEOUT) == 0, "and never times out");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a transmit timeout expires into Timeout and standby");
+  /* SetTx carries the same three bytes SetRx does, and they were discarded the
+   * same way. Unlike receive there is no continuous case: a transmission ends,
+   * so a deadline reached means the waveform never finished. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    /* 6400 counts of 15.625 us is 100 ms. */
+    const uint8_t tx[] = {0x83, 0x00, 0x19, 0x00};
+    vsx_spi_transaction(c, tx, nullptr, sizeof(tx));
+    check(mode_of(c) == 2, "the chip is transmitting");
+
+    vsx_tick(c, now + 99);
+    check((irq_flags(c) & IRQ_TIMEOUT) == 0, "before the deadline, nothing");
+    vsx_tick(c, now + 100);
+    check((irq_flags(c) & IRQ_TIMEOUT) != 0, "at it, Timeout");
+    check(mode_of(c) == 0, "and the transmitter has stopped");
+    check((irq_flags(c) & IRQ_TX_DONE) == 0, "a transmission that timed out is not done");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a transmission that finishes in time does not also time out");
+  /* The deadline has to be disarmed by the thing it was waiting for, or a chip
+   * that transmitted perfectly reports a fault a hundred milliseconds later. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t tx[] = {0x83, 0x00, 0x19, 0x00};
+    vsx_spi_transaction(c, tx, nullptr, sizeof(tx));
+
+    vsx_tick(c, now + 10);
+    vsx_transmit_finished(c);
+    check((irq_flags(c) & IRQ_TX_DONE) != 0, "TxDone arrives");
+
+    vsx_tick(c, now + 500);
+    check((irq_flags(c) & IRQ_TIMEOUT) == 0, "and the deadline it beat never fires");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a transmit timeout of zero is a driver that will wait");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t tx[] = {0x83, 0x00, 0x00, 0x00};
+    vsx_spi_transaction(c, tx, nullptr, sizeof(tx));
+
+    vsx_tick(c, now + 5000);
+    check(mode_of(c) == 2, "still transmitting five seconds later");
+    check((irq_flags(c) & IRQ_TIMEOUT) == 0, "with no deadline to reach");
+    vsx_destroy(c);
+  }
+
   return report("");
 }
