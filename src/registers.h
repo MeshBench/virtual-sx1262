@@ -155,14 +155,21 @@ namespace {
 // receive, and a driver that means "listen until I say otherwise" writes this.
 [[maybe_unused]] constexpr uint32_t kRxContinuous = 0xFFFFFF;
 
-// How far into a transmission a receiver locks onto the preamble, and how much
-// later the header is demodulated. Both are in symbols and become milliseconds
-// through the current modem settings, because that is what makes them behave
-// like a radio rather than like a constant: at SF12 a preamble takes an age and
-// at SF7 it is gone in a blink, and MeshCore's listen-before-talk times exactly
-// that.
+// How far into a transmission a receiver locks onto the preamble, and where the
+// header ends. Both are in symbols and become milliseconds through the current
+// modem settings, because that is what makes them behave like a radio rather
+// than like a constant: at SF12 a preamble takes an age and at SF7 it is gone in
+// a blink, and MeshCore's listen-before-talk times exactly that.
+//
+// The header cannot be read until the whole preamble, the two sync symbols and
+// the 2.25-symbol SFD have gone by, and it is the first interleaver block after
+// them: eight symbols, always at CR 4/8. A fixed twelve symbols raised
+// HeaderValid 32 symbols early for MeshCore's 32-symbol preamble at SF8 and
+// below (16 at SF9 and up), which shrank the stretch where a firmware that can see
+// preambles answers differently from one that cannot to a third of its real width.
 [[maybe_unused]] constexpr double kPreambleSymbols = 4.0;
-[[maybe_unused]] constexpr double kHeaderSymbols = 12.0;
+[[maybe_unused]] constexpr double kSyncAndSfdSymbols = 4.25;
+[[maybe_unused]] constexpr double kHeaderBlockSymbols = 8.0;
 }  // namespace
 
 #endif /* VIRTUAL_SX1262_REGISTERS_H */

@@ -217,5 +217,49 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("HeaderValid waits for the preamble, the SFD and the header block");
+  /* It was raised twelve symbols into the carrier whatever the preamble, so for
+   * MeshCore's sixteen-symbol preamble it came sixteen symbols early. A
+   * firmware that sees preambles and one that does not answer differently only
+   * between PreambleDetected and HeaderValid, and that stretch was a third of
+   * its real width. At SF8 and 62.5 kHz a symbol is 4.096 ms, so the header ends
+   * (16 + 4.25 + 8) symbols, about 115.7 ms, into the frame. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 100; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check((irq_flags(c) & IRQ_PREAMBLE) != 0, "the preamble is detected early on");
+    check((irq_flags(c) & IRQ_HEADER) == 0,
+          "but 100 ms in, the header has not ended yet");
+    for (int i = 0; i < 20; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check((irq_flags(c) & IRQ_HEADER) != 0, "and 120 ms in, it has");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("an implicit-header receiver never raises HeaderValid");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    /* SetPacketParams: preamble 16, implicit header, length 32, CRC on. */
+    const uint8_t pp[] = {0x8C, 0x00, 0x10, 0x01, 0x20, 0x01, 0x00, 0x00, 0x00};
+    vsx_spi_transaction(c, pp, nullptr, sizeof(pp));
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 300; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check((irq_flags(c) & IRQ_PREAMBLE) != 0, "the preamble is still detected");
+    check((irq_flags(c) & IRQ_HEADER) == 0, "but there is no header to validate");
+    vsx_destroy(c);
+  }
+
   return report("");
 }

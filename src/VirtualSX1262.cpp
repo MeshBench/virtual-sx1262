@@ -146,7 +146,11 @@ void VirtualSX1262::tick(uint64_t nowMs) {
         rxDeadlineArmed_ = false;
       }
     }
-    if (!headerRaised_ && sinceMs >= kHeaderSymbols * symMs) {
+    // The receiver's own preamble length stands in for the transmitter's: a
+    // mesh agrees on one, and the chip is told nothing about who is sending.
+    // An implicit-header receiver has no header to find.
+    const double headerEnd = preambleSyms_ + kSyncAndSfdSymbols + kHeaderBlockSymbols;
+    if (!headerImplicit_ && !headerRaised_ && sinceMs >= headerEnd * symMs) {
       raiseIrq(kIrqHeaderValid | kIrqSyncWordValid);
       headerRaised_ = true;
     }
