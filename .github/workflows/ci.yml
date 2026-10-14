@@ -127,7 +127,7 @@ jobs:
             [ "$f" = src/VirtualSX1262.h ] && limit=550
             if [ "$n" -gt "$limit" ]; then echo "$f: $n lines, over its $limit hard limit"; fail=1; fi
           done
-          [ "$fail" = 0 ] && echo "every file inside 500 lines"
+          [ "$fail" = 0 ] && echo "every file inside its limit"
           exit $fail
       - name: no em-dashes
         run: |
