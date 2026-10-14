@@ -164,9 +164,10 @@ namespace {
 // The header cannot be read until the whole preamble, the two sync symbols and
 // the 2.25-symbol SFD have gone by, and it is the first interleaver block after
 // them: eight symbols, always at CR 4/8. A fixed twelve symbols raised
-// HeaderValid 32 symbols early for MeshCore's 32-symbol preamble at SF8 and
-// below (16 at SF9 and up), which shrank the stretch where a firmware that can see
-// preambles answers differently from one that cannot to a third of its real width.
+// HeaderValid 32.25 symbols early for MeshCore's 32-symbol preamble at SF8 and
+// below (16 at SF9 and up). That shrank the stretch where a firmware that can
+// see preambles answers differently from one that cannot, from PreambleDetected
+// to HeaderValid, to eight symbols of its real 40.25: a fifth.
 [[maybe_unused]] constexpr double kPreambleSymbols = 4.0;
 [[maybe_unused]] constexpr double kSyncAndSfdSymbols = 4.25;
 [[maybe_unused]] constexpr double kHeaderBlockSymbols = 8.0;
