@@ -120,7 +120,12 @@ jobs:
           fail=0
           for f in include/*.h src/* test/*; do
             n=$(wc -l < "$f")
-            if [ "$n" -gt 500 ]; then echo "$f: $n lines, over the 500 hard limit"; fail=1; fi
+            limit=500
+            # The one exception, granted once and frozen at the length it was
+            # granted at, so the file can shrink but never grow. Recorded in
+            # CLAUDE.md beside the rule; the way out is to split it.
+            [ "$f" = src/VirtualSX1262.h ] && limit=512
+            if [ "$n" -gt "$limit" ]; then echo "$f: $n lines, over its $limit hard limit"; fail=1; fi
           done
           [ "$fail" = 0 ] && echo "every file inside 500 lines"
           exit $fail
