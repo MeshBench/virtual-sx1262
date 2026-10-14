@@ -214,7 +214,8 @@ typedef struct {
   /* Events the chip had and the firmware never saw, because IrqMask had them
    * masked off. A firmware waiting on an interrupt it did not enable looks
    * exactly like a quiet mesh, and this is the only thing that tells the two
-   * apart. */
+   * apart. One per event, however many of its bits were masked: a header is one
+   * event whether one interrupt or three would have announced it. */
   uint32_t irq_suppressed;
   /* Scans run, and scans that found a carrier. A host comparing a firmware that
    * scans against one that does not needs to know the scans happened and what

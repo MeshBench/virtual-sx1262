@@ -7,6 +7,34 @@
  */
 #include "harness.h"
 
+/* Two frames heard under one IrqMask, the way a receive loop takes them: a
+ * carrier long enough to carry its header, the frame, the carrier gone, and the
+ * status cleared before the next. Answers what the chip counted as suppressed. */
+static uint32_t suppressed_over_two_frames(uint16_t mask) {
+  vsx_chip* c = vsx_create();
+  uint64_t now = 0;
+  bring_up(c, &now);
+  /* SetDioIrqParams: the mask under test, and RxDone alone routed to DIO1. */
+  const uint8_t dio[] = {0x08, (uint8_t)(mask >> 8), (uint8_t)mask, 0, 0x02, 0, 0, 0, 0};
+  vsx_spi_transaction(c, dio, nullptr, sizeof(dio));
+  const uint8_t frame[] = {1, 2, 3, 4};
+  for (int n = 0; n < 2; ++n) {
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 150; ++i) {
+      vsx_tick(c, ++now);
+    }
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_set_channel_busy(c, 0);
+    vsx_tick(c, ++now);
+    const uint8_t clear[] = {0x02, 0xFF, 0xFF};
+    vsx_spi_transaction(c, clear, nullptr, sizeof(clear));
+  }
+  vsx_counters k;
+  vsx_get_counters(c, &k);
+  vsx_destroy(c);
+  return k.irq_suppressed;
+}
+
 int main() {
   std::printf("virtual-sx1262");
 
@@ -291,6 +319,20 @@ int main() {
     check(mode_of(c) == 2, "still transmitting five seconds later");
     check((irq_flags(c) & IRQ_TIMEOUT) == 0, "with no deadline to reach");
     vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a LoRa header is not counted against a mask that leaves FSK out");
+  /* The header was raised as HeaderValid and SyncWordValid together, and
+   * SyncWordValid is the GFSK modem's. No LoRa firmware enables it, so every
+   * header counted as suppressed and a correctly configured firmware looked as
+   * though it were still missing interrupts. The two masks are MeshCore's own:
+   * 1.17 enables PreambleDetected for receive and 1.16 does not. */
+  {
+    check(suppressed_over_two_frames(0x0276) == 0,
+          "1.17's mask misses nothing on a frame it receives");
+    check(suppressed_over_two_frames(0x0272) == 2,
+          "1.16's misses PreambleDetected, once per frame");
   }
 
   return report("");

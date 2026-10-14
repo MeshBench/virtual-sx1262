@@ -31,6 +31,8 @@ int main() {
     }
     check((irq_flags(c) & IRQ_HEADER) != 0,
           "while the carrier is on the air, HeaderValid is set");
+    check((irq_flags(c) & IRQ_SYNC_WORD) == 0,
+          "and SyncWordValid is not: that is the FSK modem's, and this is LoRa");
 
     const uint8_t frame[] = {0x11, 0x00, 0x33, 0x0a, 0xc2, 0x1f};
     vsx_deliver_frame(c, frame, sizeof(frame));
@@ -41,7 +43,6 @@ int main() {
     check((f & IRQ_RX_DONE) != 0, "the delivered packet raises RxDone");
     check((f & IRQ_HEADER) == 0, "HeaderValid is clear once the carrier has gone");
     check((f & IRQ_PREAMBLE) == 0, "PreambleDetected is clear too");
-    check((f & IRQ_SYNC_WORD) == 0, "SyncWordValid is clear too");
     vsx_destroy(c);
   }
 
@@ -220,7 +221,7 @@ int main() {
   /* ---------------------------------------------------------------- */
   CASE("HeaderValid waits for the preamble, the SFD and the header block");
   /* It was raised twelve symbols into the carrier whatever the preamble, so for
-   * MeshCore's sixteen-symbol preamble it came sixteen symbols early. A
+   * the chip's default sixteen-symbol preamble it came 16.25 symbols early. A
    * firmware that sees preambles and one that does not answer differently only
    * between PreambleDetected and HeaderValid, and that stretch was a third of
    * its real width. At SF8 and 62.5 kHz a symbol is 4.096 ms, so the header ends

@@ -149,9 +149,14 @@ void VirtualSX1262::tick(uint64_t nowMs) {
     // The receiver's own preamble length stands in for the transmitter's: a
     // mesh agrees on one, and the chip is told nothing about who is sending.
     // An implicit-header receiver has no header to find.
+    //
+    // HeaderValid alone: SyncWordValid is the GFSK modem's interrupt, and a LoRa
+    // receiver reports its header through HeaderValid (DS_SX1261-2 table 13-29).
+    // Raising both made every header count as suppressed on a firmware that
+    // correctly leaves the FSK bit out of its mask.
     const double headerEnd = preambleSyms_ + kSyncAndSfdSymbols + kHeaderBlockSymbols;
     if (!headerImplicit_ && !headerRaised_ && sinceMs >= headerEnd * symMs) {
-      raiseIrq(kIrqHeaderValid | kIrqSyncWordValid);
+      raiseIrq(kIrqHeaderValid);
       headerRaised_ = true;
     }
   }
@@ -203,7 +208,7 @@ void VirtualSX1262::setChannelBusy(bool busy) {
     preambleRaised_ = false;
     headerRaised_ = false;
     if (stuckIrqMs_ == 0) {
-      irq_ &= (uint16_t) ~(kIrqPreambleDetected | kIrqHeaderValid | kIrqSyncWordValid);
+      irq_ &= (uint16_t) ~(kIrqPreambleDetected | kIrqHeaderValid);
     }
   }
   channelBusy_ = busy;
