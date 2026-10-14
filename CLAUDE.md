@@ -57,7 +57,7 @@ Mechanical, because taste does not survive scale.
 
 | Rule | Limit |
 |---|---|
-| File length | 300 lines soft, **500 hard** |
+| File length | 300 lines soft, **500 hard**; `src/VirtualSX1262.h` alone may reach 550, until the recorded-only command set moves into its own type |
 | Function length | 50 lines soft |
 | Nesting depth | 4 |
 | Dead code | none, git remembers |
