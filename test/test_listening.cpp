@@ -169,5 +169,31 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("clearing the flags mid-frame does not detect the same preamble again");
+  /* A firmware that times a flag out and clears it while the frame is still on
+   * the air must see the flag stay down: the preamble has gone by, and the
+   * part has nothing to detect until the next one. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    vsx_set_strict_receive(c, 1);
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 150; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check((irq_flags(c) & (IRQ_PREAMBLE | IRQ_HEADER)) == (IRQ_PREAMBLE | IRQ_HEADER),
+          "both flags are up part-way through the frame");
+    const uint8_t clr[] = {0x02, 0xFF, 0xFF};
+    vsx_spi_transaction(c, clr, nullptr, sizeof(clr));
+    for (int i = 0; i < 100; ++i) {
+      vsx_tick(c, ++now);
+    }
+    check((irq_flags(c) & (IRQ_PREAMBLE | IRQ_HEADER)) == 0,
+          "and stay down for the rest of the same carrier");
+    vsx_destroy(c);
+  }
+
   return report("");
 }
