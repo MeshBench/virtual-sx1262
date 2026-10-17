@@ -126,5 +126,48 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("strict detection flags outlive the carrier, as on silicon");
+  /* The part has no interrupt for a preamble that came to nothing, so a flag
+   * raised for a frame that never finished stays until the firmware clears it.
+   * That stale flag is what a driver's own timeouts exist to handle. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    vsx_set_strict_receive(c, 1);
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 200; ++i) {
+      vsx_tick(c, ++now);
+    }
+    vsx_set_channel_busy(c, 0);
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_PREAMBLE) != 0, "PreambleDetected is still set");
+    check((irq_flags(c) & IRQ_HEADER) != 0, "and so is HeaderValid");
+
+    vsx_deliver_frame_failed(c, kFrame, sizeof(kFrame), 3);
+    check((irq_flags(c) & IRQ_HEADER) == 0,
+          "a frame never locked onto withdraws HeaderValid");
+    check((irq_flags(c) & IRQ_PREAMBLE) != 0, "and leaves PreambleDetected latched");
+    check((irq_flags(c) & IRQ_RX_DONE) == 0, "with no RxDone");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("without strict receive, a frame never locked onto changes nothing");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 200; ++i) {
+      vsx_tick(c, ++now);
+    }
+    vsx_deliver_frame_failed(c, kFrame, sizeof(kFrame), 3);
+    check((irq_flags(c) & IRQ_HEADER) != 0, "HeaderValid is untouched");
+    check((irq_flags(c) & IRQ_CRC_ERR) == 0, "and it is not read as a CRC error");
+    vsx_destroy(c);
+  }
+
   return report("");
 }

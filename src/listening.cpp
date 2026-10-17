@@ -61,3 +61,16 @@ void VirtualSX1262::settleStrict() {
   }
   deliverPending();
 }
+
+// A frame the receiver detected and never locked onto: too weak to sync, or
+// lost before its header. HeaderValid here was raised from how long the carrier
+// had lasted, which is this model's stand-in for a header it cannot decode, and
+// for this frame the stand-in was wrong, so it goes. PreambleDetected stays
+// latched, as it does on silicon, which has no interrupt for a preamble that
+// came to nothing: clearing it is the firmware's business. Strict receive only,
+// because the lenient model clears both flags with the carrier anyway.
+void VirtualSX1262::forgetHeader() {
+  if (strictReceive_) {
+    irq_ &= (uint16_t)~kIrqHeaderValid;
+  }
+}

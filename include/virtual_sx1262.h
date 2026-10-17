@@ -109,7 +109,11 @@ void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
                             uint16_t sync_word);
 
 /* A frame the receiver got and could not trust. `failure` is 1 for a CRC error
- * and 2 for a header error.
+ * and 2 for a header error. 3, since ABI 1.7, is a frame the receiver detected
+ * and never locked onto: under strict receive it withdraws the HeaderValid the
+ * model raised for it and leaves PreambleDetected latched; otherwise it does
+ * nothing. A library older than 1.7 reads 3 as a CRC error, so a host sends it
+ * only to a library that reports 1.7 or later.
  *
  * PLACEHOLDER INTERFACE, and the only way CrcErr or HeaderErr can be raised at
  * all. The chip cannot decide this: whether a frame's CRC checks depends on
@@ -250,7 +254,9 @@ void vsx_set_stuck_irq_ms(vsx_chip* chip, uint32_t ms);
 
 /* Receive a frame only if the receiver was in receive from its preamble to its
  * end, as the part does: SetStandby, CAD or a transmission part-way through
- * loses it, and preamble detection only counts symbols heard in receive. Off by
+ * loses it, and preamble detection only counts symbols heard in receive. The
+ * detection flags also stay latched when the carrier ends, as on silicon,
+ * until the firmware clears them or failure 3 withdraws a header. Off by
  * default, for a host whose clock is the engine's own; the emulated hosts drift
  * against the engine and keep the inbox grace. Since ABI 1.7. */
 void vsx_set_strict_receive(vsx_chip* chip, int on);

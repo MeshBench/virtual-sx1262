@@ -98,6 +98,10 @@ bench of its own:
   frame here as it would on the air. It is for a host whose clock is the
   engine's own, such as the native build; the emulated hosts drift against the
   engine, and their frames' start times are not known closely enough to judge.
+  Under strict receive the detection flags also stay latched when the carrier
+  ends, as the part's do, until the firmware clears them; a frame the host says
+  was never locked onto withdraws the HeaderValid the model raised for it and
+  leaves PreambleDetected for the firmware's own timeout to deal with.
 - **The chip only lies when asked to.** Latching a detection flag past the signal
   is what real SX1262s sometimes do, and what MeshCore 1.17's recovery exists to
   survive, so it is a deliberate variant and never the default.

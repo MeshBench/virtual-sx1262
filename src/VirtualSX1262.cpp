@@ -209,7 +209,7 @@ void VirtualSX1262::setChannelBusy(bool busy) {
     // the real "4 second lock-up" MeshCore 1.17's driver exists to recover from.
     preambleRaised_ = false;
     headerRaised_ = false;
-    if (stuckIrqMs_ == 0) {
+    if (stuckIrqMs_ == 0 && !strictReceive_) {
       irq_ &= (uint16_t) ~(kIrqPreambleDetected | kIrqHeaderValid);
     }
   }

@@ -353,6 +353,7 @@ class VirtualSX1262 {
   bool preambleWasHeard() const;
   bool caughtFrameOf(size_t len) const;
   void settleStrict();
+  void forgetHeader();
   void settleInbox();
   void deliverPending();
 
