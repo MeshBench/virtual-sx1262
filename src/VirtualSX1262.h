@@ -291,6 +291,11 @@ class VirtualSX1262 {
   // cannot be observed at all - which is exactly what twelve runs showed.
   void setStuckIrqMs(uint32_t ms) { stuckIrqMs_ = ms; }
 
+  // Receive only what the receiver was listening for, from preamble to end;
+  // src/listening.cpp says what that means and which hosts may ask for it.
+  void setStrictReceive(bool on) { strictReceive_ = on; }
+  uint32_t framesAborted() const { return framesAborted_; }
+
   // Airtime, from the parameters the firmware actually programmed.
   uint32_t estAirtimeMs(int lenBytes) const;
 
@@ -344,6 +349,10 @@ class VirtualSX1262 {
   // waits for ever on silicon and works perfectly here.
   void raiseIrq(uint16_t bits);
   uint64_t inboxGraceMs() const;
+  uint64_t listeningSinceMs() const;
+  bool preambleWasHeard() const;
+  bool caughtFrameOf(size_t len) const;
+  void settleStrict();
   void settleInbox();
   void deliverPending();
 
@@ -396,6 +405,9 @@ class VirtualSX1262 {
   // re-arm and still nowhere near the seconds-scale staleness being bounded.
   static constexpr uint64_t kInboxGraceFloorMs = 50;
   bool headerRaised_ = false;
+  bool strictReceive_ = false;
+  uint64_t rxSinceMs_ = 0;
+  uint32_t framesAborted_ = 0;
 
   float rssi_ = -100, snr_ = 0;
   // Receiver noise: a counter-based stream, so it is reproducible and has no

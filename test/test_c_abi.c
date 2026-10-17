@@ -204,6 +204,9 @@ int main(void) {
   vsx_set_stuck_irq_ms(chip, 0);
   check(1, "vsx_set_stuck_irq_ms");
 
+  vsx_set_strict_receive(chip, 0);
+  check(vsx_frames_aborted(chip) == 0, "vsx_set_strict_receive and vsx_frames_aborted");
+
   /* Every call must tolerate a null handle, because a host that failed to
    * create one should get a quiet no-op rather than a crash inside the
    * library it just loaded. */
@@ -223,6 +226,8 @@ int main(void) {
   check(vsx_dio1_asserted(NULL) == 0, "vsx_dio1_asserted(NULL)");
   check(vsx_take_tx(NULL, tx, sizeof(tx)) == 0, "vsx_take_tx(NULL)");
   check(vsx_est_airtime_ms(NULL, 119) == 0, "vsx_est_airtime_ms(NULL)");
+  vsx_set_strict_receive(NULL, 1);
+  check(vsx_frames_aborted(NULL) == 0, "vsx_frames_aborted(NULL)");
 
   /* A transaction with no reply buffer is legal: most commands are writes. */
   vsx_spi_transaction(chip, set_rx, NULL, sizeof(set_rx));

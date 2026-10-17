@@ -91,6 +91,13 @@ bench of its own:
   rather than an immediate drop, because the driver's own `startReceive` is
   standby, configure, `SetRx`: the chip is briefly not listening inside a
   perfectly healthy receiver, and a frame landing in that gap is receivable.
+- **Unless the host asks for strict receive.** Silicon gives no grace: SetStandby
+  aborts a reception, and a receiver back in receive locks on only if enough
+  preamble is left to detect. `vsx_set_strict_receive` models that, so a driver
+  that re-arms mid-frame or scans for activity while a frame arrives loses the
+  frame here as it would on the air. It is for a host whose clock is the
+  engine's own, such as the native build; the emulated hosts drift against the
+  engine, and their frames' start times are not known closely enough to judge.
 - **The chip only lies when asked to.** Latching a detection flag past the signal
   is what real SX1262s sometimes do, and what MeshCore 1.17's recovery exists to
   survive, so it is a deliberate variant and never the default.

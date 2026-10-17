@@ -135,7 +135,8 @@ void VirtualSX1262::tick(uint64_t nowMs) {
   const double symMs = symbolMs();
   if (channelBusy_) {
     const double sinceMs = (double)(nowMs_ - busySinceMs_);
-    if (!preambleRaised_ && sinceMs >= kPreambleSymbols * symMs) {
+    const double heardMs = (double)(nowMs_ - listeningSinceMs());
+    if (!preambleRaised_ && preambleWasHeard() && heardMs >= kPreambleSymbols * symMs) {
       raiseIrq(kIrqPreambleDetected);
       preambleRaised_ = true;
       preambleRaises_++;
@@ -155,7 +156,8 @@ void VirtualSX1262::tick(uint64_t nowMs) {
     // Raising both made every header count as suppressed on a firmware that
     // correctly leaves the FSK bit out of its mask.
     const double headerEnd = preambleSyms_ + kSyncAndSfdSymbols + kHeaderBlockSymbols;
-    if (!headerImplicit_ && !headerRaised_ && sinceMs >= headerEnd * symMs) {
+    if (!headerImplicit_ && !headerRaised_ && (preambleRaised_ || !strictReceive_) &&
+        sinceMs >= headerEnd * symMs) {
       raiseIrq(kIrqHeaderValid);
       headerRaised_ = true;
     }
@@ -262,6 +264,10 @@ uint64_t VirtualSX1262::inboxGraceMs() const {
 // deafness and the grace exists to cover exactly that.
 void VirtualSX1262::settleInbox() {
   if (inbox.empty()) return;
+  if (strictReceive_) {
+    settleStrict();
+    return;
+  }
   if (mode_ == kModeRx) {
     deliverPending();
     return;
@@ -309,6 +315,7 @@ void VirtualSX1262::refreshNoise() {
 }
 
 void VirtualSX1262::startRx(uint32_t timeoutRaw) {
+  if (mode_ != kModeRx) rxSinceMs_ = nowMs_;
   mode_ = 1;
 
   // SetRx carries a 24-bit timeout, and two of its values are not durations.

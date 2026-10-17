@@ -248,6 +248,18 @@ uint32_t vsx_est_airtime_ms(const vsx_chip* chip, int len_bytes);
  * recovery exists to survive, and the only place the model lies on purpose. */
 void vsx_set_stuck_irq_ms(vsx_chip* chip, uint32_t ms);
 
+/* Receive a frame only if the receiver was in receive from its preamble to its
+ * end, as the part does: SetStandby, CAD or a transmission part-way through
+ * loses it, and preamble detection only counts symbols heard in receive. Off by
+ * default, for a host whose clock is the engine's own; the emulated hosts drift
+ * against the engine and keep the inbox grace. Since ABI 1.7. */
+void vsx_set_strict_receive(vsx_chip* chip, int on);
+
+/* Frames refused under strict receive, because the receiver was not listening
+ * for all of them. A separate call rather than a vsx_counters field, so a host
+ * built against an older header is not handed a larger struct. Since ABI 1.7. */
+uint32_t vsx_frames_aborted(const vsx_chip* chip);
+
 /* Seed this chip's receiver noise.
  *
  * Firmware helps itself to a radio's noise for entropy - RadioLib reads the
