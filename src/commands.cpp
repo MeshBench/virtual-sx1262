@@ -108,8 +108,15 @@ uint8_t VirtualSX1262::statusByte() const {
 void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
                                        uint8_t failure) {
   (void)frame;
-  (void)len;
+  if (failure == kReceiveNoLock) {
+    forgetHeader();
+    return;
+  }
   if (mode_ != kModeRx) {
+    return;
+  }
+  if (strictReceive_ && !caughtFrameOf(len)) {
+    framesAborted_++;
     return;
   }
   if (failure == kReceiveHeaderError) {
