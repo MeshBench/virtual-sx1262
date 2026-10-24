@@ -268,8 +268,11 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       if (len >= 3) {
         uint16_t clear = ((uint16_t)out[1] << 8) | out[2];
         irq_ &= (uint16_t)~clear;
-        if (clear & kIrqPreambleDetected) preambleRaised_ = false;
-        if (clear & kIrqHeaderValid) headerRaised_ = false;
+        // Under strict receive a carrier's preamble and header are detected
+        // once: clearing the flag mid-frame does not put the preamble back on
+        // the air, and re-raising it held a receiver busy for whole frames.
+        if (!strictReceive_ && (clear & kIrqPreambleDetected)) preambleRaised_ = false;
+        if (!strictReceive_ && (clear & kIrqHeaderValid)) headerRaised_ = false;
       }
       break;
 

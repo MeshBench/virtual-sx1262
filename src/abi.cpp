@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 6
+#define VSX_ABI_MINOR 7
 
 struct vsx_chip {
   VirtualSX1262 chip;
@@ -271,6 +271,16 @@ void vsx_set_stuck_irq_ms(vsx_chip* chip, uint32_t ms) {
   if (chip) {
     chip->chip.setStuckIrqMs(ms);
   }
+}
+
+void vsx_set_strict_receive(vsx_chip* chip, int on) {
+  if (chip) {
+    chip->chip.setStrictReceive(on != 0);
+  }
+}
+
+uint32_t vsx_frames_aborted(const vsx_chip* chip) {
+  return chip ? chip->chip.framesAborted() : 0;
 }
 
 void vsx_set_noise_seed(vsx_chip* chip, uint64_t seed) {

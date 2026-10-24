@@ -107,6 +107,7 @@ namespace {
 [[maybe_unused]] constexpr uint8_t kReceiveOk = 0;
 [[maybe_unused]] constexpr uint8_t kReceiveCrcError = 1;
 [[maybe_unused]] constexpr uint8_t kReceiveHeaderError = 2;
+[[maybe_unused]] constexpr uint8_t kReceiveNoLock = 3;
 
 // The LoRa sync word, which lives in two registers rather than a command.
 //
