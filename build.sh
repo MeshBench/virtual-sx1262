@@ -63,7 +63,13 @@ SRC="src/VirtualSX1262.cpp src/cad.cpp src/commands.cpp src/spi.cpp src/abi.cpp 
 # on both, and a plugin carrying its own copy into a host process that already
 # has one is the worse bet.
 case "$(uname -s 2>/dev/null)" in
-  MINGW*|MSYS*|CYGWIN*) SHARED_EXT=dll;   SHARED_RUNTIME="-static" ;;
+  # CRT_fp10.o by name: it defines __mingw_fe_dfl_env, which libmingwex's
+  # fesetenv refers to, and gcc adds it to a program's link but not a DLL's.
+  # MinGW-w64 r532 (gcc 16.2) is where a static DLL started needing it.
+  MINGW*|MSYS*|CYGWIN*) SHARED_EXT=dll
+    SHARED_RUNTIME="-static"
+    fp=$($CXX -print-file-name=CRT_fp10.o 2>/dev/null || true)
+    [ -f "$fp" ] && SHARED_RUNTIME="$SHARED_RUNTIME $fp" ;;
   Darwin)               SHARED_EXT=dylib; SHARED_RUNTIME="" ;;
   *)                    SHARED_EXT=so;    SHARED_RUNTIME="" ;;
 esac
