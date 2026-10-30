@@ -122,11 +122,45 @@ void VirtualSX1262::endSingleShot() {
   }
 }
 
+// Continuous receive writes each packet straight after the last one in the
+// buffer (datasheet 7.2). What the part reports while the next one arrives is
+// not documented; this models the case the corruption seen on air needs: the
+// payload length follows the newest header while the start pointer stays on the
+// last completed packet. A host uses failures 5 and 6 to test a driver against
+// that, not as a statement of how the part behaves.
+void VirtualSX1262::startNextFrame() {
+  if (mode_ != kModeRx || !rxContinuous_) {
+    nextFrame_.clear();  // a receiver that stopped never heard it
+    framesAborted_++;
+    return;
+  }
+  if (nextWhen_ == kReceiveNextBeforeRead) {
+    applyNextFrame();
+  } else {
+    nextArmed_ = true;
+  }
+}
+
+void VirtualSX1262::applyNextFrame() {
+  const uint8_t at = (uint8_t)(rxBase_ + rxLen_);
+  const size_t n = nextFrame_.size() > 255 ? 255 : nextFrame_.size();
+  for (size_t i = 0; i < n; i++) buffer_[(uint8_t)(at + i)] = nextFrame_[i];
+  rxLen_ = (uint8_t)n;
+  nextFrame_.clear();
+  nextArmed_ = false;
+}
+
 // A frame the receiver got and could not trust. See the header for why the
 // interface is a placeholder: the chip cannot decide this, and nothing calls it
 // yet.
 void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
                                        uint8_t failure) {
+  if (failure == kReceiveNextBeforeRead || failure == kReceiveNextDuringRead) {
+    nextFrame_.assign(frame, frame + len);
+    nextWhen_ = failure;
+    if (inbox.empty() && (irq_ & kIrqRxDone)) startNextFrame();
+    return;
+  }
   if (failure == kReceiveNoLock) {
     forgetHeader();
     return;

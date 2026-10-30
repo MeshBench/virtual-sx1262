@@ -357,6 +357,8 @@ class VirtualSX1262 {
   // Latch what the received header said into the two registers a driver reads.
   void latchRxHeader(bool crcOn);
   void endSingleShot();
+  void startNextFrame();
+  void applyNextFrame();
   void settleInbox();
   void deliverPending();
 
@@ -412,6 +414,10 @@ class VirtualSX1262 {
   bool strictReceive_ = false;
   uint64_t rxSinceMs_ = 0;
   uint32_t framesAborted_ = 0;
+  // Failures 5 and 6: the next frame, and whether it waits for a status read.
+  std::vector<uint8_t> nextFrame_;
+  uint8_t nextWhen_ = 0;
+  bool nextArmed_ = false;
 
   float rssi_ = -100, snr_ = 0;
   // Receiver noise: a counter-based stream, so it is reproducible and has no

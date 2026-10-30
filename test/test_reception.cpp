@@ -354,5 +354,64 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("the next frame's header before the read: its length, the last frame's start");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t a[] = {0x01, 0x00, 0xAA, 0xBB, 0xCC};
+    const uint8_t b[] = {0x01, 0x01, 0x91, 0xAA, 0xBB, 0xCC};
+    vsx_deliver_frame(c, a, sizeof(a));
+    vsx_deliver_frame_failed(c, b, sizeof(b), 5);
+    vsx_tick(c, ++now);
+    uint8_t len = 0, start = 0, got[sizeof(b)] = {0};
+    rx_buffer_status(c, &len, &start);
+    read_buffer(c, start, got, len);
+    check(len == sizeof(b), "the length is the next frame's");
+    check(std::memcmp(got, a, sizeof(a)) == 0 && got[sizeof(a)] == b[0],
+          "and reading it from the start gives this frame and the next one's first byte");
+    vsx_destroy(c);
+  }
+
+  CASE(
+      "the next frame's header during the read: the length changes after the first "
+      "status read");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t a[] = {0x01, 0x00, 0xAA, 0xBB, 0xCC};
+    const uint8_t b[] = {0x01, 0x01, 0x91, 0xAA, 0xBB, 0xCC};
+    vsx_deliver_frame(c, a, sizeof(a));
+    vsx_deliver_frame_failed(c, b, sizeof(b), 6);
+    vsx_tick(c, ++now);
+    uint8_t len1 = 0, len2 = 0, start = 0;
+    rx_buffer_status(c, &len1, &start);
+    rx_buffer_status(c, &len2, &start);
+    check(len1 == sizeof(a), "the first status read gives this frame's length");
+    check(len2 == sizeof(b), "the second gives the next frame's");
+    vsx_destroy(c);
+  }
+
+  CASE("single-shot receive never hears the next frame");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t single[] = {0x82, 0x00, 0x00, 0x00};
+    vsx_spi_transaction(c, single, nullptr, sizeof(single));
+    vsx_tick(c, ++now);
+    const uint8_t a[] = {0x01, 0x00, 0xAA, 0xBB, 0xCC};
+    const uint8_t b[] = {0x01, 0x01, 0x91, 0xAA, 0xBB, 0xCC};
+    vsx_deliver_frame(c, a, sizeof(a));
+    vsx_deliver_frame_failed(c, b, sizeof(b), 5);
+    vsx_tick(c, ++now);
+    uint8_t len = 0, start = 0;
+    rx_buffer_status(c, &len, &start);
+    check(len == sizeof(a), "the length stays this frame's");
+    vsx_destroy(c);
+  }
+
   return report("");
 }

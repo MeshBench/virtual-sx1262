@@ -120,6 +120,14 @@ void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
  * RxDone alone, and only the header CRC flag (bit 4 of register 0x076B) says
  * otherwise. Every other reception sets that flag.
  *
+ * 5 and 6, since ABI 1.8, are the next frame's header arriving in continuous
+ * receive after the last frame's RxDone and before the firmware read it (5),
+ * or after its first buffer status read (6). The bytes go straight after the
+ * last frame in the buffer and the reported length becomes the next frame's,
+ * while the start pointer stays where it was. That timing is not documented by
+ * the part: it is a model for testing a driver, not a claim. A receiver not in
+ * continuous receive never hears it.
+ *
  * PLACEHOLDER INTERFACE, and the only way CrcErr or HeaderErr can be raised at
  * all. The chip cannot decide this: whether a frame's CRC checks depends on
  * what arrived at the antenna, which the simulator owns. Nothing calls this

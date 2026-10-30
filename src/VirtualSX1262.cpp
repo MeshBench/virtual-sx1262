@@ -288,6 +288,7 @@ void VirtualSX1262::deliverPending() {
   latchRxHeader(crcOn_);
   raiseIrq(kIrqRxDone);
   endSingleShot();
+  if (!nextFrame_.empty()) startNextFrame();
   // Deliberately only RxDone. The detection flags say "a carrier is present",
   // and by the time a frame is delivered the carrier has ended - raising them
   // here asserted the presence of a signal at the moment it stopped, which is

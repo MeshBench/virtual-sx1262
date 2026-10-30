@@ -112,6 +112,11 @@ namespace {
 // has nothing to check, so it is delivered like a good one: RxDone and nothing
 // else, whatever the bytes are.
 [[maybe_unused]] constexpr uint8_t kReceiveNoCrc = 4;
+// The next frame's header, arriving in continuous receive after the last frame's
+// RxDone and before the firmware read it (5), or between its buffer status read
+// and the rest of the read (6). See VirtualSX1262::applyNextFrame.
+[[maybe_unused]] constexpr uint8_t kReceiveNextBeforeRead = 5;
+[[maybe_unused]] constexpr uint8_t kReceiveNextDuringRead = 6;
 
 // What the last explicit header said, as Semtech's own driver reads it back
 // (sx126x_get_lora_params_from_header): the coding rate in bits 6:4 of 0x0749
