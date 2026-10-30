@@ -257,11 +257,14 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
 
     case kGetIrqStatus:
-      // [op][nop][status][irq hi][irq lo]
+      // [op][status][irq hi][irq lo], table 13-30: four bytes, which is what
+      // RadioLib clocks. The low byte answered only a fifth, so a driver
+      // reading the flags never saw RxDone, CrcErr, HeaderValid or
+      // PreambleDetected, and a CRC failure read as a good packet.
       irqReads_++;
       if (irq_ & (kIrqPreambleDetected | kIrqHeaderValid)) busyReads_++;
-      if (len >= 4) in[2] = (uint8_t)(irq_ >> 8);
-      if (len >= 5) in[3] = (uint8_t)(irq_ & 0xFF);
+      if (len >= 3) in[2] = (uint8_t)(irq_ >> 8);
+      if (len >= 4) in[3] = (uint8_t)(irq_ & 0xFF);
       break;
 
     case kClearIrqStatus:
@@ -277,9 +280,9 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       break;
 
     case kGetRxBufferStatus:
-      // [op][nop][status][payload len][start ptr]
-      if (len >= 4) in[2] = rxLen_;
-      if (len >= 5) in[3] = rxBase_;
+      // [op][status][payload len][start ptr], table 13-78
+      if (len >= 3) in[2] = rxLen_;
+      if (len >= 4) in[3] = rxBase_;
       break;
 
     case kGetPacketStatus:
@@ -319,8 +322,9 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
       if (len >= 3) in[2] = packetType_;
       break;
     case kGetDeviceErrors:
-      if (len >= 4) in[2] = (uint8_t)(deviceErrors_ >> 8);
-      if (len >= 5) in[3] = (uint8_t)(deviceErrors_ & 0xFF);
+      // [op][status][errors hi][errors lo], table 13-84.
+      if (len >= 3) in[2] = (uint8_t)(deviceErrors_ >> 8);
+      if (len >= 4) in[3] = (uint8_t)(deviceErrors_ & 0xFF);
       break;
     case kClearDeviceErrors:
       break;
