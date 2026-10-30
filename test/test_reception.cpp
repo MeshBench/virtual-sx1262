@@ -282,5 +282,47 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("the received header's coding rate and CRC flag can be read back");
+  /* RadioLib's getLoRaRxHeaderInfo() and Semtech's own driver read these two
+   * registers to learn what the transmitter's header said. Left at zero, every
+   * frame read as sent without a CRC, and a driver that checks would have
+   * dropped them all. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8, 0x2d, 0xb7};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "the frame is received");
+    check((read_reg(c, 0x076B) & 0x10) != 0,
+          "0x076B bit 4 says the header carried a CRC");
+    check(((read_reg(c, 0x0749) >> 4) & 0x07) == 4,
+          "0x0749 bits 6:4 give coding rate 4/8");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a header that says no CRC delivers the frame unchecked, and says so");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8, 0x2d, 0xb7};
+    vsx_deliver_frame_failed(c, frame, sizeof(frame), 4);
+    vsx_tick(c, ++now);
+    const uint16_t f = irq_flags(c);
+    check((f & IRQ_RX_DONE) != 0, "RxDone is raised");
+    check((f & IRQ_CRC_ERR) == 0, "and CrcErr is not: there was nothing to check");
+    check((read_reg(c, 0x076B) & 0x10) == 0, "0x076B bit 4 is clear");
+    uint8_t len = 0, start = 0, got[sizeof(frame)] = {0};
+    rx_buffer_status(c, &len, &start);
+    read_buffer(c, start, got, sizeof(got));
+    check(len == sizeof(frame) && std::memcmp(got, frame, sizeof(frame)) == 0,
+          "the bytes are in the buffer as they arrived");
+    vsx_destroy(c);
+  }
+
   return report("");
 }

@@ -102,12 +102,21 @@ uint8_t VirtualSX1262::statusByte() const {
   return (uint8_t)((chipMode << 4) | (cmd << 1));
 }
 
+// The header of a frame that was received carries the transmitter's coding rate
+// and whether a CRC follows the payload, and the part keeps both for the driver
+// to read. Every frame the simulator hands over says the same as this receiver
+// is set to, because a mismatch would not have been received at all; only
+// failure 4 says otherwise.
+void VirtualSX1262::latchRxHeader(bool crcOn) {
+  regs_[kRegLoRaRxCodingRate] = (uint8_t)(((cr_ - 4) & 0x07) << 4);
+  regs_[kRegLoRaRxCrc] = crcOn ? 0x10 : 0x00;
+}
+
 // A frame the receiver got and could not trust. See the header for why the
 // interface is a placeholder: the chip cannot decide this, and nothing calls it
 // yet.
 void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
                                        uint8_t failure) {
-  (void)frame;
   if (failure == kReceiveNoLock) {
     forgetHeader();
     return;
@@ -124,13 +133,23 @@ void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
     raiseIrq(kIrqHeaderErr);
     return;
   }
+  rxLen_ = (uint8_t)(len > 255 ? 255 : len);
+  memcpy(&buffer_[rxBase_], frame, rxLen_);
+  if (failure == kReceiveNoCrc) {
+    // The header said there is no CRC, so the part checks nothing and the
+    // frame is as good as any other to the firmware. Only the header register
+    // tells the two apart.
+    statRxPackets_++;
+    latchRxHeader(false);
+    raiseIrq(kIrqRxDone);
+    return;
+  }
   // A CRC failure is a frame that arrived: the payload is in the buffer and
   // RxDone is raised beside CrcErr, because that is what the part does and a
   // driver that reads the buffer on RxDone must find the corrupt bytes there
   // rather than the last good frame's.
   statCrcErrors_++;
-  rxLen_ = (uint8_t)(len > 255 ? 255 : len);
-  memcpy(&buffer_[rxBase_], frame, rxLen_);
+  latchRxHeader(crcOn_);
   raiseIrq(kIrqRxDone | kIrqCrcErr);
 }
 

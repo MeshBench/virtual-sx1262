@@ -115,6 +115,11 @@ void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
  * nothing. A library older than 1.7 reads 3 as a CRC error, so a host sends it
  * only to a library that reports 1.7 or later.
  *
+ * 4, since ABI 1.8, is a frame whose explicit header said its payload carries
+ * no CRC. The part has nothing to check, so it is delivered like a good frame,
+ * RxDone alone, and only the header CRC flag (bit 4 of register 0x076B) says
+ * otherwise. Every other reception sets that flag.
+ *
  * PLACEHOLDER INTERFACE, and the only way CrcErr or HeaderErr can be raised at
  * all. The chip cannot decide this: whether a frame's CRC checks depends on
  * what arrived at the antenna, which the simulator owns. Nothing calls this

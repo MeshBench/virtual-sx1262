@@ -285,6 +285,7 @@ void VirtualSX1262::deliverPending() {
   memcpy(&buffer_[rxBase_], f.data(), rxLen_);
   inbox.pop_front();
   statRxPackets_++;
+  latchRxHeader(crcOn_);
   raiseIrq(kIrqRxDone);
   // Deliberately only RxDone. The detection flags say "a carrier is present",
   // and by the time a frame is delivered the carrier has ended - raising them

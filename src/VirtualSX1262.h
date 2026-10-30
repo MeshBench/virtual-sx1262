@@ -354,6 +354,8 @@ class VirtualSX1262 {
   bool caughtFrameOf(size_t len) const;
   void settleStrict();
   void forgetHeader();
+  // Latch what the received header said into the two registers a driver reads.
+  void latchRxHeader(bool crcOn);
   void settleInbox();
   void deliverPending();
 
