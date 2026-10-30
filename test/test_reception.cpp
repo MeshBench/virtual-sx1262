@@ -262,5 +262,25 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("the four-byte GetIrqStatus RadioLib sends gets both flag bytes");
+  /* The low byte answered only a five-byte read, so RadioLib's readData never
+   * saw CrcErr and a firmware forwarded a frame that failed its CRC. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8, 0x2d, 0xb7};
+    vsx_deliver_frame_failed(c, frame, sizeof(frame), 1);
+    vsx_tick(c, ++now);
+    const uint8_t tx[] = {0x12, 0, 0, 0};
+    uint8_t rx[sizeof(tx)] = {0};
+    vsx_spi_transaction(c, tx, rx, sizeof(tx));
+    const uint16_t flags = (uint16_t)((rx[2] << 8) | rx[3]);
+    check((flags & IRQ_CRC_ERR) != 0, "CrcErr is in the low byte of a four-byte read");
+    check((flags & IRQ_RX_DONE) != 0, "and so is RxDone");
+    vsx_destroy(c);
+  }
+
   return report("");
 }
