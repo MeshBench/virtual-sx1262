@@ -112,6 +112,16 @@ void VirtualSX1262::latchRxHeader(bool crcOn) {
   regs_[kRegLoRaRxCrc] = crcOn ? 0x10 : 0x00;
 }
 
+// Single mode, with or without a timeout, returns to STDBY_RC after a packet
+// (datasheet 13.1.5, table 13-9). Only continuous receive keeps listening, and a driver
+// that asked for one packet must not be handed a second it never re-armed for.
+void VirtualSX1262::endSingleShot() {
+  if (!rxContinuous_) {
+    mode_ = kModeStandby;
+    rxDeadlineArmed_ = false;
+  }
+}
+
 // A frame the receiver got and could not trust. See the header for why the
 // interface is a placeholder: the chip cannot decide this, and nothing calls it
 // yet.
@@ -142,6 +152,7 @@ void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
     statRxPackets_++;
     latchRxHeader(false);
     raiseIrq(kIrqRxDone);
+    endSingleShot();
     return;
   }
   // A CRC failure is a frame that arrived: the payload is in the buffer and
@@ -151,6 +162,7 @@ void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
   statCrcErrors_++;
   latchRxHeader(crcOn_);
   raiseIrq(kIrqRxDone | kIrqCrcErr);
+  endSingleShot();
 }
 
 void VirtualSX1262::deliverFrame(const uint8_t* frame, size_t len) {

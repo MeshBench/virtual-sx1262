@@ -324,5 +324,35 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("single-shot receive goes back to standby after a packet");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t single[] = {0x82, 0x00, 0x00, 0x00};
+    vsx_spi_transaction(c, single, nullptr, sizeof(single));
+    vsx_tick(c, ++now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "the packet is received");
+    check(mode_of(c) == 0, "and the chip is in standby, not still listening");
+    vsx_destroy(c);
+  }
+
+  CASE("continuous receive keeps listening after a packet");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "the packet is received");
+    check(mode_of(c) == 1, "and the chip is still receiving");
+    vsx_destroy(c);
+  }
+
   return report("");
 }
