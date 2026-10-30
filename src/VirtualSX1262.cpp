@@ -285,7 +285,10 @@ void VirtualSX1262::deliverPending() {
   memcpy(&buffer_[rxBase_], f.data(), rxLen_);
   inbox.pop_front();
   statRxPackets_++;
+  latchRxHeader(crcOn_);
   raiseIrq(kIrqRxDone);
+  endSingleShot();
+  if (!nextFrame_.empty()) startNextFrame();
   // Deliberately only RxDone. The detection flags say "a carrier is present",
   // and by the time a frame is delivered the carrier has ended - raising them
   // here asserted the presence of a signal at the moment it stopped, which is
@@ -325,6 +328,7 @@ void VirtualSX1262::startRx(uint32_t timeoutRaw) {
   // and mean different things, and collapsing the two is how a receiver that
   // should never stop acquires a deadline.
   rxDeadlineArmed_ = timeoutRaw != 0 && timeoutRaw != kRxContinuous;
+  rxContinuous_ = timeoutRaw == kRxContinuous;
   if (rxDeadlineArmed_) {
     rxDeadlineMs_ = nowMs_ + (uint64_t)((double)timeoutRaw * kTimeoutStepMs + 0.5);
   } else if (timeoutRaw == 0 && symbNumTimeout_ > 0) {

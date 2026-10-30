@@ -102,12 +102,65 @@ uint8_t VirtualSX1262::statusByte() const {
   return (uint8_t)((chipMode << 4) | (cmd << 1));
 }
 
+// The header of a frame that was received carries the transmitter's coding rate
+// and whether a CRC follows the payload, and the part keeps both for the driver
+// to read. Every frame the simulator hands over says the same as this receiver
+// is set to, because a mismatch would not have been received at all; only
+// failure 4 says otherwise.
+void VirtualSX1262::latchRxHeader(bool crcOn) {
+  regs_[kRegLoRaRxCodingRate] = (uint8_t)(((cr_ - 4) & 0x07) << 4);
+  regs_[kRegLoRaRxCrc] = crcOn ? 0x10 : 0x00;
+}
+
+// Single mode, with or without a timeout, returns to STDBY_RC after a packet
+// (datasheet 13.1.5, table 13-9). Only continuous receive keeps listening, and a driver
+// that asked for one packet must not be handed a second it never re-armed for.
+void VirtualSX1262::endSingleShot() {
+  if (!rxContinuous_) {
+    mode_ = kModeStandby;
+    rxDeadlineArmed_ = false;
+  }
+}
+
+// Continuous receive writes each packet straight after the last one in the
+// buffer (datasheet 7.2). What the part reports while the next one arrives is
+// not documented; this models the case the corruption seen on air needs: the
+// payload length follows the newest header while the start pointer stays on the
+// last completed packet. A host uses failures 5 and 6 to test a driver against
+// that, not as a statement of how the part behaves.
+void VirtualSX1262::startNextFrame() {
+  if (mode_ != kModeRx || !rxContinuous_) {
+    nextFrame_.clear();  // a receiver that stopped never heard it
+    framesAborted_++;
+    return;
+  }
+  if (nextWhen_ == kReceiveNextBeforeRead) {
+    applyNextFrame();
+  } else {
+    nextArmed_ = true;
+  }
+}
+
+void VirtualSX1262::applyNextFrame() {
+  const uint8_t at = (uint8_t)(rxBase_ + rxLen_);
+  const size_t n = nextFrame_.size() > 255 ? 255 : nextFrame_.size();
+  for (size_t i = 0; i < n; i++) buffer_[(uint8_t)(at + i)] = nextFrame_[i];
+  rxLen_ = (uint8_t)n;
+  nextFrame_.clear();
+  nextArmed_ = false;
+}
+
 // A frame the receiver got and could not trust. See the header for why the
 // interface is a placeholder: the chip cannot decide this, and nothing calls it
 // yet.
 void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
                                        uint8_t failure) {
-  (void)frame;
+  if (failure == kReceiveNextBeforeRead || failure == kReceiveNextDuringRead) {
+    nextFrame_.assign(frame, frame + len);
+    nextWhen_ = failure;
+    if (inbox.empty() && (irq_ & kIrqRxDone)) startNextFrame();
+    return;
+  }
   if (failure == kReceiveNoLock) {
     forgetHeader();
     return;
@@ -124,14 +177,26 @@ void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
     raiseIrq(kIrqHeaderErr);
     return;
   }
+  rxLen_ = (uint8_t)(len > 255 ? 255 : len);
+  memcpy(&buffer_[rxBase_], frame, rxLen_);
+  if (failure == kReceiveNoCrc) {
+    // The header said there is no CRC, so the part checks nothing and the
+    // frame is as good as any other to the firmware. Only the header register
+    // tells the two apart.
+    statRxPackets_++;
+    latchRxHeader(false);
+    raiseIrq(kIrqRxDone);
+    endSingleShot();
+    return;
+  }
   // A CRC failure is a frame that arrived: the payload is in the buffer and
   // RxDone is raised beside CrcErr, because that is what the part does and a
   // driver that reads the buffer on RxDone must find the corrupt bytes there
   // rather than the last good frame's.
   statCrcErrors_++;
-  rxLen_ = (uint8_t)(len > 255 ? 255 : len);
-  memcpy(&buffer_[rxBase_], frame, rxLen_);
+  latchRxHeader(crcOn_);
   raiseIrq(kIrqRxDone | kIrqCrcErr);
+  endSingleShot();
 }
 
 void VirtualSX1262::deliverFrame(const uint8_t* frame, size_t len) {

@@ -282,5 +282,136 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("the received header's coding rate and CRC flag can be read back");
+  /* RadioLib's getLoRaRxHeaderInfo() and Semtech's own driver read these two
+   * registers to learn what the transmitter's header said. Left at zero, every
+   * frame read as sent without a CRC, and a driver that checks would have
+   * dropped them all. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8, 0x2d, 0xb7};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "the frame is received");
+    check((read_reg(c, 0x076B) & 0x10) != 0,
+          "0x076B bit 4 says the header carried a CRC");
+    check(((read_reg(c, 0x0749) >> 4) & 0x07) == 4,
+          "0x0749 bits 6:4 give coding rate 4/8");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("a header that says no CRC delivers the frame unchecked, and says so");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8, 0x2d, 0xb7};
+    vsx_deliver_frame_failed(c, frame, sizeof(frame), 4);
+    vsx_tick(c, ++now);
+    const uint16_t f = irq_flags(c);
+    check((f & IRQ_RX_DONE) != 0, "RxDone is raised");
+    check((f & IRQ_CRC_ERR) == 0, "and CrcErr is not: there was nothing to check");
+    check((read_reg(c, 0x076B) & 0x10) == 0, "0x076B bit 4 is clear");
+    uint8_t len = 0, start = 0, got[sizeof(frame)] = {0};
+    rx_buffer_status(c, &len, &start);
+    read_buffer(c, start, got, sizeof(got));
+    check(len == sizeof(frame) && std::memcmp(got, frame, sizeof(frame)) == 0,
+          "the bytes are in the buffer as they arrived");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("single-shot receive goes back to standby after a packet");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t single[] = {0x82, 0x00, 0x00, 0x00};
+    vsx_spi_transaction(c, single, nullptr, sizeof(single));
+    vsx_tick(c, ++now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "the packet is received");
+    check(mode_of(c) == 0, "and the chip is in standby, not still listening");
+    vsx_destroy(c);
+  }
+
+  CASE("continuous receive keeps listening after a packet");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t frame[] = {0x15, 0x00, 0x34, 0xb8};
+    vsx_deliver_frame(c, frame, sizeof(frame));
+    vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_RX_DONE) != 0, "the packet is received");
+    check(mode_of(c) == 1, "and the chip is still receiving");
+    vsx_destroy(c);
+  }
+
+  /* ---------------------------------------------------------------- */
+  CASE("the next frame's header before the read: its length, the last frame's start");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t a[] = {0x01, 0x00, 0xAA, 0xBB, 0xCC};
+    const uint8_t b[] = {0x01, 0x01, 0x91, 0xAA, 0xBB, 0xCC};
+    vsx_deliver_frame(c, a, sizeof(a));
+    vsx_deliver_frame_failed(c, b, sizeof(b), 5);
+    vsx_tick(c, ++now);
+    uint8_t len = 0, start = 0, got[sizeof(b)] = {0};
+    rx_buffer_status(c, &len, &start);
+    read_buffer(c, start, got, len);
+    check(len == sizeof(b), "the length is the next frame's");
+    check(std::memcmp(got, a, sizeof(a)) == 0 && got[sizeof(a)] == b[0],
+          "and reading it from the start gives this frame and the next one's first byte");
+    vsx_destroy(c);
+  }
+
+  CASE(
+      "the next frame's header during the read: the length changes after the first "
+      "status read");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t a[] = {0x01, 0x00, 0xAA, 0xBB, 0xCC};
+    const uint8_t b[] = {0x01, 0x01, 0x91, 0xAA, 0xBB, 0xCC};
+    vsx_deliver_frame(c, a, sizeof(a));
+    vsx_deliver_frame_failed(c, b, sizeof(b), 6);
+    vsx_tick(c, ++now);
+    uint8_t len1 = 0, len2 = 0, start = 0;
+    rx_buffer_status(c, &len1, &start);
+    rx_buffer_status(c, &len2, &start);
+    check(len1 == sizeof(a), "the first status read gives this frame's length");
+    check(len2 == sizeof(b), "the second gives the next frame's");
+    vsx_destroy(c);
+  }
+
+  CASE("single-shot receive never hears the next frame");
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t single[] = {0x82, 0x00, 0x00, 0x00};
+    vsx_spi_transaction(c, single, nullptr, sizeof(single));
+    vsx_tick(c, ++now);
+    const uint8_t a[] = {0x01, 0x00, 0xAA, 0xBB, 0xCC};
+    const uint8_t b[] = {0x01, 0x01, 0x91, 0xAA, 0xBB, 0xCC};
+    vsx_deliver_frame(c, a, sizeof(a));
+    vsx_deliver_frame_failed(c, b, sizeof(b), 5);
+    vsx_tick(c, ++now);
+    uint8_t len = 0, start = 0;
+    rx_buffer_status(c, &len, &start);
+    check(len == sizeof(a), "the length stays this frame's");
+    vsx_destroy(c);
+  }
+
   return report("");
 }

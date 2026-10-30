@@ -354,6 +354,11 @@ class VirtualSX1262 {
   bool caughtFrameOf(size_t len) const;
   void settleStrict();
   void forgetHeader();
+  // Latch what the received header said into the two registers a driver reads.
+  void latchRxHeader(bool crcOn);
+  void endSingleShot();
+  void startNextFrame();
+  void applyNextFrame();
   void settleInbox();
   void deliverPending();
 
@@ -409,6 +414,10 @@ class VirtualSX1262 {
   bool strictReceive_ = false;
   uint64_t rxSinceMs_ = 0;
   uint32_t framesAborted_ = 0;
+  // Failures 5 and 6: the next frame, and whether it waits for a status read.
+  std::vector<uint8_t> nextFrame_;
+  uint8_t nextWhen_ = 0;
+  bool nextArmed_ = false;
 
   float rssi_ = -100, snr_ = 0;
   // Receiver noise: a counter-based stream, so it is reproducible and has no
@@ -432,6 +441,8 @@ class VirtualSX1262 {
   // all, and all ones is continuous. Only the values between the two are a
   // deadline, which is why this is a flag and an instant rather than a duration.
   bool rxDeadlineArmed_ = false;
+  // SetRx with all ones; anything else returns to standby after a packet.
+  bool rxContinuous_ = true;
   uint64_t rxDeadlineMs_ = 0;
 
   // Transmit timeout, from SetTx, on the same 15.625 us unit.

@@ -83,6 +83,7 @@ void VirtualSX1262::endTransaction() {
   inTxn_ = false;
   if (txn_.empty()) return;    // a chip select with no command in it
   if (returnsData(txn_[0])) {  // already evaluated, and it changed nothing
+    if (txn_[0] == kGetRxBufferStatus && nextArmed_) applyNextFrame();
     txn_.clear();
     return;
   }
@@ -97,6 +98,8 @@ void VirtualSX1262::spiTransfer(const uint8_t* out, size_t len, uint8_t* in) {
   refreshNoise();
   memset(in, 0, len);
   runCommand(out, len, in);
+  // After the reply, so the read that arms failure 6 still sees the old length.
+  if (out[0] == kGetRxBufferStatus && nextArmed_) applyNextFrame();
 }
 
 void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {

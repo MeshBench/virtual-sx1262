@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 7
+#define VSX_ABI_MINOR 8
 
 struct vsx_chip {
   VirtualSX1262 chip;

@@ -96,6 +96,32 @@ static inline void set_standby(vsx_chip* c) {
   vsx_spi_transaction(c, sb, nullptr, sizeof(sb));
 }
 
+/* ReadRegister: [op][addr 15:8][addr 7:0][status][data]. */
+static inline uint8_t read_reg(vsx_chip* c, uint16_t addr) {
+  const uint8_t tx[] = {0x1D, (uint8_t)(addr >> 8), (uint8_t)addr, 0, 0};
+  uint8_t rx[sizeof(tx)] = {0};
+  vsx_spi_transaction(c, tx, rx, sizeof(tx));
+  return rx[4];
+}
+
+/* GetRxBufferStatus: [op][status][payload length][start pointer]. */
+static inline void rx_buffer_status(vsx_chip* c, uint8_t* len, uint8_t* start) {
+  const uint8_t tx[] = {0x13, 0, 0, 0};
+  uint8_t rx[sizeof(tx)] = {0};
+  vsx_spi_transaction(c, tx, rx, sizeof(tx));
+  *len = rx[2];
+  *start = rx[3];
+}
+
+/* ReadBuffer: [op][offset][status][data...]. */
+static inline void read_buffer(vsx_chip* c, uint8_t offset, uint8_t* out, size_t n) {
+  std::vector<uint8_t> tx(3 + n, 0), rx(3 + n, 0);
+  tx[0] = 0x1E;
+  tx[1] = offset;
+  vsx_spi_transaction(c, tx.data(), rx.data(), tx.size());
+  std::memcpy(out, rx.data() + 3, n);
+}
+
 /* Every binary ends the same way: say what happened, and answer the shell. */
 static inline int report(const char* what) {
   std::printf("\n%s: %d failure(s)\n\n", g_failures ? "FAILED" : "PASSED", g_failures);
