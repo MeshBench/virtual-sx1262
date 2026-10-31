@@ -27,6 +27,8 @@
 #include <deque>
 #include <vector>
 
+#include "continuous.h"
+
 class VirtualSX1262 {
  public:
   VirtualSX1262();
@@ -273,6 +275,10 @@ class VirtualSX1262 {
   // sync-word check and will walk around the next one too. New callers use this.
   void deliverFrame(const uint8_t* frame, size_t len);
 
+  // A frame whose carrier has just begun here, so its header and payload land
+  // in the buffer as they arrive rather than whole at the end. continuous.cpp.
+  void frameStarted(const uint8_t* frame, size_t len);
+
   // Whether the modem is spending two bits a symbol on low data rate
   // optimisation, from what the firmware programmed rather than from the
   // spreading factor alone.
@@ -361,6 +367,10 @@ class VirtualSX1262 {
   void applyNextFrame();
   void settleInbox();
   void deliverPending();
+  void tickFollowing();
+  void dropFollowing();
+  void writeReceived(const uint8_t* frame, size_t len);
+  ContinuousRx cont_;
 
   // Chip state.
   uint8_t buffer_[256] = {0};
