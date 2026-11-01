@@ -133,6 +133,27 @@ int main() {
     vsx_destroy(c);
   }
 
+  CASE("a frame sent at a slower coding rate is still there when it is handed over");
+  /* The transmitter's coding rate need not be this receiver's: at 4/8 a frame
+   * lasts about a quarter longer than this chip's own 4/5 airtime says. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    const uint8_t cr45[] = {0x8B, 8, 0x03, 1, 0};
+    vsx_spi_transaction(c, cr45, nullptr, sizeof(cr45));
+    const auto a = frame_of(20, 0x10), b = frame_of(40, 0x80);
+    vsx_deliver_frame(c, a.data(), a.size());
+    vsx_tick(c, ++now);
+    const uint64_t began = now;
+    vsx_frame_started(c, b.data(), b.size());
+    run_to(c, &now, began + vsx_est_airtime_ms(c, (int)b.size()) * 5 / 4);
+    uint8_t len = 0, start = 0;
+    rx_buffer_status(c, &len, &start);
+    check(len == b.size(), "the length is still the arriving frame's");
+    vsx_destroy(c);
+  }
+
   CASE("an announced frame that is never handed over is taken back out");
   {
     vsx_chip* c = vsx_create();
@@ -143,7 +164,7 @@ int main() {
     vsx_tick(c, ++now);
     const uint64_t began = now;
     vsx_frame_started(c, b.data(), b.size());
-    run_to(c, &now, began + vsx_est_airtime_ms(c, (int)b.size()) + 100);
+    run_to(c, &now, began + vsx_est_airtime_ms(c, (int)b.size()) * 2 + 100);
     uint8_t len = 0, start = 0, got[40] = {0};
     rx_buffer_status(c, &len, &start);
     read_buffer(c, (uint8_t)a.size(), got, sizeof(got));

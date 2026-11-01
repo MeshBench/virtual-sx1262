@@ -174,6 +174,9 @@ void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
     return;
   }
   if (failure == kReceiveHeaderError) {
+    // A header that failed was never valid: withdraw the HeaderValid the
+    // carrier raised, or a driver reads HeaderErr beside it as a good packet.
+    forgetHeader();
     dropFollowing();
     statHeaderErrors_++;
     raiseIrq(kIrqHeaderErr);

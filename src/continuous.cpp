@@ -40,8 +40,9 @@ void VirtualSX1262::tickFollowing() {
       (preambleSyms_ + kSyncAndSfdSymbols + kHeaderBlockSymbols) * symbolMs();
   const double endMs = (double)estAirtimeMs((int)len);
   // Never handed over, so never locked onto: the host decided it was not
-  // received, and the part would not have shown its header either.
-  if (sinceMs > endMs + (double)kInboxGraceFloorMs) {
+  // received, and the part would not have shown its header either. Judged at
+  // the slowest coding rate, as the transmitter's need not be this receiver's.
+  if (sinceMs > endMs * 8 / cr_ + (double)kInboxGraceFloorMs) {
     dropFollowing();
     return;
   }
