@@ -195,5 +195,25 @@ int main() {
     vsx_destroy(c);
   }
 
+  /* ---------------------------------------------------------------- */
+  CASE("a header error withdraws the HeaderValid its carrier raised");
+  /* Silicon never reports both: a header that failed was never valid. Left
+   * up, RadioLib reads HeaderErr beside it as a good packet and returns
+   * whatever the buffer last held. */
+  {
+    vsx_chip* c = vsx_create();
+    uint64_t now = 0;
+    bring_up(c, &now);
+    vsx_set_strict_receive(c, 1);
+    vsx_set_channel_busy(c, 1);
+    for (int i = 0; i < 200; i++) vsx_tick(c, ++now);
+    check((irq_flags(c) & IRQ_HEADER) != 0, "the carrier raised HeaderValid");
+    vsx_deliver_frame_failed(c, kFrame, sizeof(kFrame), 2);
+    const uint16_t f = irq_flags(c);
+    check((f & IRQ_HEADER_ERR) != 0 && (f & IRQ_HEADER) == 0,
+          "HeaderErr is raised and HeaderValid is withdrawn");
+    vsx_destroy(c);
+  }
+
   return report("");
 }

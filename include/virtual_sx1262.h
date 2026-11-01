@@ -139,6 +139,18 @@ void vsx_deliver_frame_from(vsx_chip* chip, const uint8_t* frame, size_t len,
 void vsx_deliver_frame_failed(vsx_chip* chip, const uint8_t* frame, size_t len,
                               uint8_t failure);
 
+/* A frame whose carrier has just begun here, from a host that knows what it
+ * carries before it ends. Since ABI 1.9.
+ *
+ * Optional. A frame announced here lands in the data buffer as it arrives: its
+ * length and header registers at the instant HeaderValid is raised, and its
+ * payload as its symbols do, straight after the last frame received. It still
+ * has to be handed over with vsx_deliver_frame or vsx_deliver_frame_failed when
+ * it ends; one that never is, or that fails before its payload, is taken back
+ * out. Without this a frame lands whole when it is handed over, and a driver
+ * that reads late can never see the next frame's header. */
+void vsx_frame_started(vsx_chip* chip, const uint8_t* frame, size_t len);
+
 /* The waveform the chip started has finished on the air. The chip cannot know
  * this: how long a transmission occupied the channel is a property of the
  * samples the simulator generated. */

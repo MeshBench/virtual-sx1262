@@ -142,7 +142,7 @@ void VirtualSX1262::startNextFrame() {
 }
 
 void VirtualSX1262::applyNextFrame() {
-  const uint8_t at = (uint8_t)(rxBase_ + rxLen_);
+  const uint8_t at = cont_.write;
   const size_t n = nextFrame_.size() > 255 ? 255 : nextFrame_.size();
   for (size_t i = 0; i < n; i++) buffer_[(uint8_t)(at + i)] = nextFrame_[i];
   rxLen_ = (uint8_t)n;
@@ -163,6 +163,7 @@ void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
   }
   if (failure == kReceiveNoLock) {
     forgetHeader();
+    dropFollowing();
     return;
   }
   if (mode_ != kModeRx) {
@@ -173,12 +174,15 @@ void VirtualSX1262::deliverFrameFailed(const uint8_t* frame, size_t len,
     return;
   }
   if (failure == kReceiveHeaderError) {
+    // A header that failed was never valid: withdraw the HeaderValid the
+    // carrier raised, or a driver reads HeaderErr beside it as a good packet.
+    forgetHeader();
+    dropFollowing();
     statHeaderErrors_++;
     raiseIrq(kIrqHeaderErr);
     return;
   }
-  rxLen_ = (uint8_t)(len > 255 ? 255 : len);
-  memcpy(&buffer_[rxBase_], frame, rxLen_);
+  writeReceived(frame, len);
   if (failure == kReceiveNoCrc) {
     // The header said there is no CRC, so the part checks nothing and the
     // frame is as good as any other to the firmware. Only the header register

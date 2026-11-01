@@ -195,20 +195,17 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
 
     case kWriteBuffer:
       if (len >= 2) {
+        // The address is eight bits, like every pointer the part reports, so
+        // it wraps: continuous receive puts frames across the end of the buffer.
         uint8_t offset = out[1];
-        for (size_t i = 2; i < len && (size_t)offset + (i - 2) < sizeof(buffer_); i++) {
-          buffer_[offset + (i - 2)] = out[i];
-        }
+        for (size_t i = 2; i < len; i++) buffer_[(uint8_t)(offset + (i - 2))] = out[i];
       }
       break;
 
     case kReadBuffer:
       if (len >= 3) {
         uint8_t offset = out[1];
-        for (size_t i = 3; i < len; i++) {
-          size_t idx = (size_t)offset + (i - 3);
-          in[i] = idx < sizeof(buffer_) ? buffer_[idx] : 0;
-        }
+        for (size_t i = 3; i < len; i++) in[i] = buffer_[(uint8_t)(offset + (i - 3))];
       }
       break;
 
@@ -285,7 +282,7 @@ void VirtualSX1262::runCommand(const uint8_t* out, size_t len, uint8_t* in) {
     case kGetRxBufferStatus:
       // [op][status][payload len][start ptr], table 13-78
       if (len >= 3) in[2] = rxLen_;
-      if (len >= 4) in[3] = rxBase_;
+      if (len >= 4) in[3] = cont_.start;
       break;
 
     case kGetPacketStatus:

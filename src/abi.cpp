@@ -19,7 +19,7 @@
 #include <new>
 
 #define VSX_ABI_MAJOR 1
-#define VSX_ABI_MINOR 8
+#define VSX_ABI_MINOR 9
 
 struct vsx_chip {
   VirtualSX1262 chip;
@@ -162,6 +162,12 @@ void vsx_deliver_frame_failed(vsx_chip* chip, const uint8_t* frame, size_t len,
   if (chip && frame) {
     chip->chip.deliverFrameFailed(frame, len, failure);
     settle_dio1(chip);
+  }
+}
+
+void vsx_frame_started(vsx_chip* chip, const uint8_t* frame, size_t len) {
+  if (chip && frame) {
+    chip->chip.frameStarted(frame, len);
   }
 }
 

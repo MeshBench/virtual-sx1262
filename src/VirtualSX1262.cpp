@@ -130,6 +130,7 @@ void VirtualSX1262::tick(uint64_t nowMs) {
   // Preamble and header detection, in receive mode only. A node cannot hear
   // anything while its own transmitter is keyed - that is half duplex, and the
   // engine already reports the channel as clear to a node that is transmitting.
+  tickFollowing();
   if (mode_ != kModeRx) return;
 
   const double symMs = symbolMs();
@@ -280,9 +281,7 @@ void VirtualSX1262::settleInbox() {
 
 void VirtualSX1262::deliverPending() {
   if (inbox.empty()) return;
-  auto& f = inbox.front();
-  rxLen_ = (uint8_t)(f.size() > 255 ? 255 : f.size());
-  memcpy(&buffer_[rxBase_], f.data(), rxLen_);
+  writeReceived(inbox.front().data(), inbox.front().size());
   inbox.pop_front();
   statRxPackets_++;
   latchRxHeader(crcOn_);
@@ -318,7 +317,11 @@ void VirtualSX1262::refreshNoise() {
 }
 
 void VirtualSX1262::startRx(uint32_t timeoutRaw) {
-  if (mode_ != kModeRx) rxSinceMs_ = nowMs_;
+  // Entering receive starts filling the buffer from its base again.
+  if (mode_ != kModeRx) {
+    rxSinceMs_ = nowMs_;
+    cont_.write = rxBase_;
+  }
   mode_ = 1;
 
   // SetRx carries a 24-bit timeout, and two of its values are not durations.

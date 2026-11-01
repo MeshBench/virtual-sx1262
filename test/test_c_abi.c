@@ -217,6 +217,7 @@ int main(void) {
   vsx_deliver_frame(NULL, frame, sizeof(frame));
   vsx_deliver_frame_from(NULL, frame, sizeof(frame), 0x1424);
   vsx_deliver_frame_failed(NULL, frame, sizeof(frame), 1);
+  vsx_frame_started(NULL, frame, sizeof(frame));
   vsx_transmit_finished(NULL);
   vsx_set_fem_enabled(NULL, 1);
   vsx_set_last_signal(NULL, 0.0f, 0.0f);
